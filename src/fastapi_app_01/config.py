@@ -10,12 +10,19 @@ app fail fast at startup with a clear ValidationError — instead of crashing
 later on the first database query.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchor the .env path to the project root (this file is at src/fastapi_app_01/),
+# so it's found regardless of the working directory the app is launched from
+# (e.g. PyCharm's green-run vs `uv run` from the repo root).
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
