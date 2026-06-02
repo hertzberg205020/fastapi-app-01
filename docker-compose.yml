@@ -46,7 +46,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata-fastapi-app-01:/var/lib/postgresql/data
       # 容器第一次啟動時自動執行此 SQL (啟用 vector 擴充 + 建表)
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
@@ -67,4 +67,4 @@ services:
       retries: 5
 
 volumes:
-  pgdata:
+  pgdata-fastapi-app-01:
