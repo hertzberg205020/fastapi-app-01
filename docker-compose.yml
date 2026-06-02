@@ -1,0 +1,70 @@
+services:
+  # Hybrid dev mode: the API normally runs on the host (PyCharm green-run /
+  # `uv run uvicorn ...`). This service is gated behind the "full" profile so
+  # `docker compose up` only starts postgres + redis. Use it for the occasional
+  # all-in-container / parity run: `docker compose --profile full up`.
+  # NOTE: requires a Dockerfile (build: .) — not added yet, so `full` mode is a
+  # placeholder until a multi-stage uv Dockerfile lands.
+  api:
+    profiles: ["full"]
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Inside compose the API reaches the other services by their service names,
+    # which overrides the localhost URLs from .env (used for host-side dev).
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uv run uvicorn fastapi_app_01.main:app --host 0.0.0.0 --port 8000 --reload
+    # uv-recommended hot reload: sync source into the container, rebuild on dep
+    # changes. Run with `docker compose --profile full watch`.
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+          ignore:
+            - .venv/
+        - action: rebuild
+          path: ./pyproject.toml
+
+  postgres:
+    # 直接用內建 pgvector 的官方映像檔,省去自行安裝擴充套件
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    # Bind to localhost only — don't expose the dev DB to the local network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 容器第一次啟動時自動執行此 SQL (啟用 vector 擴充 + 建表)
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    # Bind to localhost only.
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
