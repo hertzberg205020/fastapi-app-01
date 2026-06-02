@@ -62,6 +62,44 @@ curl http://localhost:8000/health
 open http://localhost:8000/docs
 ```
 
+## 本機開發(混合模式,推薦)
+
+日常開發採「**基礎服務容器化、API 本機跑**」:Postgres / Redis 用 compose 起,
+FastAPI 用 PyCharm 綠色三角(或 `uv run`)在本機跑並連 `localhost`。好處是
+debugger 零設定即可中斷、`--reload` 即時、改 code 免 rebuild image。
+
+```bash
+# 1. 準備環境變數(.env 已 gitignore)
+cp .env.example .env
+
+# 2. 只啟動相依服務(api 服務被 "full" profile 閘控,不會起)
+docker compose up -d postgres redis
+docker compose ps                 # 等 postgres / redis 變 healthy
+
+# 3. 本機跑 API(等同 PyCharm 綠色三角)
+uv run uvicorn fastapi_app_01.main:app --reload
+curl http://localhost:8000/        # {"message":"Hello World"}
+```
+
+**PyCharm 綠色三角設定**:既有的 FastAPI run config 結構不必改,只要補上連線環境變數
+(Run config → Environment variables,或裝 EnvFile plugin 載入 `.env`):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ragdb
+REDIS_URL=redis://localhost:6379/0
+```
+
+> **host 差異**:本機跑 API 連 `localhost`(容器對外 publish 的 port);
+> 若 API 也在容器內跑,則用服務名 `postgres` / `redis`——這部分 compose 會自動以
+> `environment:` 覆寫,你不用手動切。
+
+**偶爾做全容器 / parity 驗證**(需先補上 multi-stage uv `Dockerfile`):
+
+```bash
+docker compose --profile full up      # 含 api
+docker compose --profile full watch   # 改 code 自動同步進容器
+```
+
 ## 使用範例
 
 ```bash
