@@ -1,0 +1,163 @@
+openapi: 3.1.0
+info:
+  title: RAG Service API
+  version: 0.1.0
+  description: |
+    RAG 服務 API —— 當前為 **Iteration 1(Walking Skeleton)**。
+
+    本迭代只交付最薄的垂直切片:`POST /chat` 直接接 Claude(非串流、無對話歷史、無 RAG);
+    `GET /` 與 `GET /health` 為基礎端點。後續迭代(SSE 串流、Postgres/pgvector、文件匯入、
+    RAG、限流、監控)會擴充此契約。
+
+    來源:`plans/iteration-1-walking-skeleton.md`。JSON 欄位採 snake_case。
+
+servers:
+  - url: http://localhost:8000
+    description: 本機開發(host 的 uvicorn,或容器 docker compose --profile full)
+
+paths:
+  /:
+    get:
+      summary: Root
+      operationId: read_root
+      description: 服務存活訊息(冒煙用)。
+      responses:
+        "200":
+          description: 服務存活
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RootResponse"
+
+  /health:
+    get:
+      summary: Health
+      operationId: health
+      description: |
+        回報設定狀態(不洩漏密碼)。Iteration 1 起 DB/Redis 為選填,
+        故回「是否已設定」與目前使用的 model,而非連線細節。
+      responses:
+        "200":
+          description: 設定狀態
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /chat:
+    post:
+      summary: Chat
+      operationId: chat
+      description: |
+        把單一問題送給 Claude,回傳一句答案。
+        Iteration 1:**非串流**、單輪、無 system prompt、無對話歷史、無檢索。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Claude 的回答
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "422":
+          description: 請求驗證失敗(例如 `question` 為空字串)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
+        "500":
+          description: |
+            上游 LLM 呼叫失敗(逾時、限流、API 錯誤等)。
+            Iteration 1 刻意不做特別處理,錯誤自然冒出為 500;健全的錯誤處理排進後續迭代。
+
+components:
+  schemas:
+    RootResponse:
+      type: object
+      title: RootResponse
+      properties:
+        message:
+          type: string
+          examples: ["Hello World"]
+      required:
+        - message
+
+    HealthResponse:
+      type: object
+      title: HealthResponse
+      properties:
+        database_configured:
+          type: boolean
+          description: 是否已設定 DATABASE_URL(Iteration 1 通常為 false)
+        redis_configured:
+          type: boolean
+          description: 是否已設定 REDIS_URL(Iteration 1 通常為 false)
+        model:
+          type: string
+          description: 目前使用的 Claude model
+          examples: ["claude-sonnet-4-6"]
+      required:
+        - database_configured
+        - redis_configured
+        - model
+
+    ChatRequest:
+      type: object
+      title: ChatRequest
+      properties:
+        question:
+          type: string
+          minLength: 1
+          description: 使用者的提問
+          examples: ["用一句話解釋什麼是 RAG"]
+      required:
+        - question
+
+    ChatResponse:
+      type: object
+      title: ChatResponse
+      properties:
+        answer:
+          type: string
+          description: Claude 產生的回答
+      required:
+        - answer
+
+    # 以下兩個是 FastAPI 對請求驗證失敗(422)自動產生的標準結構,
+    # 列出讓契約與實際回應吻合。
+    HTTPValidationError:
+      type: object
+      title: HTTPValidationError
+      properties:
+        detail:
+          type: array
+          title: Detail
+          items:
+            $ref: "#/components/schemas/ValidationError"
+
+    ValidationError:
+      type: object
+      title: ValidationError
+      properties:
+        loc:
+          type: array
+          title: Location
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      required:
+        - loc
+        - msg
+        - type
