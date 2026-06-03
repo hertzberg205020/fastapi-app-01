@@ -45,6 +45,28 @@
 
 ---
 
+## 依賴現況(已裝 vs 待裝)
+
+> 給開發工具一眼看懂:現在裝了什麼、iteration 1 還要 `uv add` 什麼。
+
+**已安裝**(`pyproject.toml` + `uv.lock`):
+- `fastapi[standard]` 0.136.3 —— extra 已帶進 `uvicorn` 0.48.0、`starlette` 1.2.1、`pydantic` 2.13.4、
+  `httpx` 0.28.1、`anyio` 4.13.0、`python-multipart` 等。
+- `pydantic-settings` 2.14.1。
+- ⇒ **`TestClient` 已可用**(靠既有的 httpx + anyio),無需額外安裝。
+
+**iteration 1 待安裝**:
+
+| 套件 | 用途 | 必要性 | 指令 |
+| ---------- | ----------------------------- | --------------- | ---------------------- |
+| `anthropic` | 呼叫 Claude(`AsyncAnthropic`) | **必裝**(runtime) | `uv add anthropic` |
+| `pytest` | 自動化測試(採用文件測試時) | 選用(dev) | `uv add --dev pytest` |
+
+**不需要**:`requests`(改用 httpx)、`pytest-asyncio`(文件用的 `TestClient` 是同步介面)、
+`uvicorn`(已含於 `fastapi[standard]`)。
+
+---
+
 ## 各技術詳述
 
 ### Python 3.12
