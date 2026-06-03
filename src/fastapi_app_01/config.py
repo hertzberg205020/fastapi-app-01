@@ -5,9 +5,9 @@ below is a config value the app *requires* to run. pydantic-settings reads them
 (in priority order) from real environment variables first, then from the `.env`
 file, and validates them when `Settings()` is constructed at startup.
 
-Because `database_url` / `redis_url` have no default, a missing value makes the
-app fail fast at startup with a clear ValidationError — instead of crashing
-later on the first database query.
+Because `anthropic_api_key` has no default, a missing value makes the app fail
+fast at startup with a clear ValidationError — instead of crashing later on the
+first /chat call.
 """
 
 from pathlib import Path
@@ -27,9 +27,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Required — no default, so the app won't start without them.
-    database_url: str
-    redis_url: str
+    # Iteration 1 requires a Claude API key — no default, so the app fails fast
+    # at startup if it's missing instead of erroring on the first /chat call.
+    anthropic_api_key: str
+    anthropic_model: str = "claude-sonnet-4-6"
+
+    # Optional until iteration 3 (DB) / iteration 6 (Redis). The app starts
+    # fine without them; /health just reports whether they're configured.
+    database_url: str | None = None
+    redis_url: str | None = None
 
 
 # Constructed once at import time; reused everywhere via `from ... import settings`.

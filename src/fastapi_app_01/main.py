@@ -1,10 +1,11 @@
-from urllib.parse import urlparse
-
 from fastapi import FastAPI
 
+from fastapi_app_01.api.chat import router as chat_router
 from fastapi_app_01.config import settings
 
 app = FastAPI()
+app.include_router(chat_router)
+
 
 @app.get("/")
 def read_root():
@@ -13,12 +14,12 @@ def read_root():
 
 @app.get("/health")
 def health():
-    # Proves the config was loaded at startup. We never return the password —
-    # just confirm where the app is pointed, parsed from DATABASE_URL.
-    db = urlparse(settings.database_url)
+    # database_url / redis_url are optional in iteration 1 (no DB yet), so we
+    # report whether they're configured rather than parsing connection details.
     return {
-        "database": {"host": db.hostname, "port": db.port, "name": db.path.lstrip("/")},
+        "database_configured": bool(settings.database_url),
         "redis_configured": bool(settings.redis_url),
+        "model": settings.anthropic_model,
     }
 
 
