@@ -3,8 +3,6 @@ services:
   # `uv run uvicorn ...`). This service is gated behind the "full" profile so
   # `docker compose up` only starts postgres + redis. Use it for the occasional
   # all-in-container / parity run: `docker compose --profile full up`.
-  # NOTE: requires a Dockerfile (build: .) — not added yet, so `full` mode is a
-  # placeholder until a multi-stage uv Dockerfile lands.
   api:
     profiles: ["full"]
     build: .
@@ -12,16 +10,8 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    # Inside compose the API reaches the other services by their service names,
-    # which overrides the localhost URLs from .env (used for host-side dev).
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    # Iteration 1 only depends on Claude — no DB/Redis wiring here. The
+    # depends_on + DATABASE_URL/REDIS_URL injection returns in iteration 3.
     command: uv run uvicorn fastapi_app_01.main:app --host 0.0.0.0 --port 8000 --reload
     # uv-recommended hot reload: sync source into the container, rebuild on dep
     # changes. Run with `docker compose --profile full watch`.
