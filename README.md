@@ -67,16 +67,29 @@
 
 ### 目標
 
-容器跑起來,`curl POST /chat` 得到 Claude 的一句回答。整條管線(容器 → API key → 路由 → Claude)一次打通。
+host 上 `curl POST /chat` 得到 Claude 的一句回答,並能以容器形式發布。整條管線(API key → 路由 → Claude → 可發布映像)一次打通。
+
+### 開發環境 vs 發布產物
+
+敏捷的精神是「每個迭代都是可發布的增量」。所以開發跑在 host、發布以容器驗證,兩者分工:
+
+| 階段 | 環境 | 做什麼 |
+| ---------------------- | ------ | ----------------------------------------------- |
+| 開發迴圈(inner loop) | **host** | `uv run uvicorn --reload`,debugger 零設定、改 code 免 rebuild |
+| 初步測試               | **host** | `curl POST /chat` 拿到一句回答                   |
+| 發布驗證(release gate) | **容器** | 建 image 跑起來,確認可發布產物在容器內也 work,才算 Done |
 
 ### 驗收標準(Definition of Done)
 
 ```bash
+# host 開發版:
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"question": "用一句話解釋什麼是 RAG"}'
 # → {"answer": "..."}   # 非串流,單一 JSON 回應
 ```
+
+並且「可發布」:`docker compose --profile full up` 起得來、同一個 curl 打容器版也回得出答案。
 
 ### 待實作清單
 
@@ -86,21 +99,26 @@ curl -X POST http://localhost:8000/chat \
 - [ ] `config.py`:加 `anthropic_api_key`;把 `database_url` / `redis_url` 改為**選填**(本迭代不接 DB)
 - [ ] 新增 `POST /chat` 路由:非串流,直接呼叫 Claude 回傳 `{"answer": ...}`
 - [ ] `.env.example`:加 `ANTHROPIC_API_KEY`
-- [ ] 啟動只需 `ANTHROPIC_API_KEY`,**不需** postgres / redis
+- [ ] 補 multi-stage uv `Dockerfile` → 讓 compose `full` profile 從 placeholder 變可用(發布產物)
+- [ ] 開發只需 `ANTHROPIC_API_KEY`,**不需** postgres / redis
 
 ---
 
 ## 快速啟動(迭代 1)
 
-> ⚠️ 此啟動方式依賴上方「待實作清單」落地後才成立。目前程式碼僅有 `GET /` 與 `GET /health`。
+> ⚠️ 此啟動方式依賴上方「待實作清單」(`/chat`、Dockerfile)落地後才成立。目前程式碼僅有 `GET /` 與 `GET /health`。
+
+### 開發 / debug(日常):在 host 跑
+
+迭代 1 無第三方服務,直接在 host 跑最小且最快,debugger 也零設定。
 
 ```bash
-# 1. 設定環境變數
-cp .env.example .env
-#    填入 ANTHROPIC_API_KEY
+# 1. 設定環境變數(-n: .env 已存在就不覆蓋,保留你現有的值)
+cp -n .env.example .env
+#    手動補上 ANTHROPIC_API_KEY 一行
 
-# 2. 啟動 API(本迭代不需 postgres / redis)
-docker compose up --build
+# 2. host 啟動 API(本迭代不需 postgres / redis)
+uv run uvicorn fastapi_app_01.main:app --reload
 
 # 3. 提問,拿到一句回答
 curl -X POST http://localhost:8000/chat \
@@ -109,6 +127,13 @@ curl -X POST http://localhost:8000/chat \
 
 # 4. 互動式 API 文件
 open http://localhost:8000/docs
+```
+
+### 發布驗證(收工前):確認可發布產物能在容器內跑
+
+```bash
+docker compose --profile full up --build   # 需先補上 Dockerfile
+# 對容器版打同一個 curl,確認也回得出答案 → 這次迭代才算 Done
 ```
 
 ---
@@ -147,8 +172,8 @@ FastAPI 用 PyCharm 綠色三角(或 `uv run`)在本機跑並連 `localhost`。�
 debugger 零設定即可中斷、`--reload` 即時、改 code 免 rebuild image。
 
 ```bash
-# 1. 準備環境變數(.env 已 gitignore)
-cp .env.example .env
+# 1. 準備環境變數(.env 已 gitignore;-n: 已存在不覆蓋)
+cp -n .env.example .env
 
 # 2. (迭代 3 起)只啟動相依服務
 docker compose up -d postgres redis
