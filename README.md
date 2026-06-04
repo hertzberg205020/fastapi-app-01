@@ -4,9 +4,9 @@
 
 但我們**不一次端出整套**。改成一個迭代一個迭代地推進,每次迭代交付一個**垂直切片(vertical slice)**——貫穿各層、能 `curl` 出結果的薄片,而非水平堆一層基礎建設。每一片都把最難的風險先打通。
 
-> 🎯 **當前迭代 = Walking Skeleton**:FastAPI + Docker 跑起來,`POST /chat` 直接接 Claude,**不串流、不接資料庫、不做 RAG**,`curl` 能拿到一句回答就收工。
+> ✅ **迭代 1(Walking Skeleton)已完成**:FastAPI + Docker 跑起來,`POST /chat` 直接接 Claude(**不串流、不接資料庫、不做 RAG**),host 與容器版 `curl` 都能拿到一句回答。最難的整條管線(容器、API key、路由)已打通——後面所有功能都是往這根骨架上長。
 >
-> 這次迭代的價值:證明最難的整條管線(容器、API key、路由)是通的——後面所有功能都是往這根骨架上長。
+> 🎯 **下一個迭代 = SSE 串流**:把 `/chat` 從一次回傳整段,改成逐字串流(Server-Sent Events)。骨架不變,只換回應方式。
 
 技術組合(終局)對應 JD 的基本條件:**FastAPI(REST + SSE 串流)、PostgreSQL + pgvector、Redis 限流、Anthropic Claude、Docker Compose**。
 
@@ -20,8 +20,8 @@
 
 | 迭代 | 名稱 | 內容 | 狀態 |
 | ---- | --------------------- | -------------------------------------------------------- | -------- |
-| 1    | **Walking Skeleton**  | `POST /chat` → Claude → 一句回答。不串流 / 不接 DB / 不做 RAG | ✅ **進行中** |
-| 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | ⬜ 規劃中 |
+| 1    | **Walking Skeleton**  | `POST /chat` → Claude → 一句回答。不串流 / 不接 DB / 不做 RAG | ✅ **完成** |
+| 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | 🚧 下一步 |
 | 3    | 持久化                | Postgres + pgvector 落地(對話 / 文件)                    | ⬜       |
 | 4    | 文件匯入              | `POST /documents` 上傳 + 切塊 + embedding                 | ⬜       |
 | 5    | 檢索 / RAG            | 檢索相近片段、組 Prompt + 對話歷史                        | ⬜       |
@@ -63,7 +63,7 @@
 
 ---
 
-## 迭代 1(Iteration 1):Walking Skeleton
+## 迭代 1(Iteration 1):Walking Skeleton ✅
 
 ### 目標
 
@@ -91,22 +91,22 @@ curl -X POST http://localhost:8000/chat \
 
 並且「可發布」:`docker compose --profile full up` 起得來、同一個 curl 打容器版也回得出答案。
 
-### 待實作清單
+### 完成項目(Done)
 
-> 以下是這次迭代**要動的程式碼**(目前尚未完成)。完成後上面的驗收標準才會成立。
+> 以下是這次迭代動到的程式碼,皆已完成,上面的驗收標準均已通過(host + 容器 `curl`、`uv run pytest` 綠燈)。
 
-- [ ] `pyproject.toml`:加 `anthropic` 依賴
-- [ ] `config.py`:加 `anthropic_api_key`;把 `database_url` / `redis_url` 改為**選填**(本迭代不接 DB)
-- [ ] 新增 `POST /chat` 路由:非串流,直接呼叫 Claude 回傳 `{"answer": ...}`
-- [ ] `.env.example`:加 `ANTHROPIC_API_KEY`
-- [ ] 補 multi-stage uv `Dockerfile` → 讓 compose `full` profile 從 placeholder 變可用(發布產物)
-- [ ] 開發只需 `ANTHROPIC_API_KEY`,**不需** postgres / redis
+- [x] `pyproject.toml`:加 `anthropic` 依賴
+- [x] `config.py`:加 `anthropic_api_key`;把 `database_url` / `redis_url` 改為**選填**(本迭代不接 DB)
+- [x] 新增 `POST /chat` 路由:非串流,直接呼叫 Claude 回傳 `{"answer": ...}`
+- [x] `.env.example`:加 `ANTHROPIC_API_KEY`
+- [x] 補 multi-stage uv `Dockerfile` → 讓 compose `full` profile 從 placeholder 變可用(發布產物)
+- [x] 開發只需 `ANTHROPIC_API_KEY`,**不需** postgres / redis
 
 ---
 
 ## 快速啟動(迭代 1)
 
-> ⚠️ 此啟動方式依賴上方「待實作清單」(`/chat`、Dockerfile)落地後才成立。目前程式碼僅有 `GET /` 與 `GET /health`。
+> ✅ 迭代 1 已完成,以下指令可直接執行(`/chat`、`Dockerfile` 均已落地)。
 
 ### 開發 / debug(日常):在 host 跑
 
@@ -132,7 +132,7 @@ open http://localhost:8000/docs
 ### 發布驗證(收工前):確認可發布產物能在容器內跑
 
 ```bash
-docker compose --profile full up --build   # 需先補上 Dockerfile
+docker compose --profile full up --build   # Dockerfile 已就緒
 # 對容器版打同一個 curl,確認也回得出答案 → 這次迭代才算 Done
 ```
 
@@ -144,17 +144,19 @@ docker compose --profile full up --build   # 需先補上 Dockerfile
 
 | 路徑                  | 職責                                          |
 | --------------------- | --------------------------------------------- |
-| `src/fastapi_app_01/main.py`   | FastAPI 進入點;目前有 `GET /`、`GET /health` |
-| `src/fastapi_app_01/config.py` | 用 pydantic-settings 集中讀取環境變數         |
+| `src/fastapi_app_01/main.py`         | FastAPI 進入點;`GET /`、`GET /health`、註冊 chat router |
+| `src/fastapi_app_01/config.py`       | 用 pydantic-settings 集中讀取環境變數         |
+| `src/fastapi_app_01/api/chat.py`     | `POST /chat` 路由(迭代 1:非串流)            |
+| `src/fastapi_app_01/core/llm.py`     | 封裝 Anthropic 生成(`AsyncAnthropic`)        |
+| `src/fastapi_app_01/schemas/chat.py` | 請求 / 回應的 Pydantic 模型                   |
+| `Dockerfile`          | multi-stage uv 建置(可發布映像)              |
+| `tests/`              | `POST /chat` 的 in-process 測試(TestClient)  |
 | `scripts/init_db.sql` | 啟用 pgvector(建表 schema 仍為註解,待迭代 3)|
 
 ### 後續迭代才加入(尚未存在)
 
 | 路徑                     | 職責                                          | 迭代 |
 | ------------------------ | --------------------------------------------- | ---- |
-| `app/api/chat.py`        | 問答端點(迭代 1 非串流 → 迭代 2 SSE 串流)      | 1、2 |
-| `app/core/llm.py`        | 封裝 Anthropic 生成                           | 1    |
-| `app/schemas/chat.py`    | 請求 / 回應的 Pydantic 模型                   | 1    |
 | `app/db/database.py`     | PostgreSQL 連線池 / Redis client              | 3    |
 | `app/db/repository.py`   | 所有 SQL 集中於此                             | 3    |
 | `app/api/documents.py`   | 文件上傳 / 匯入端點                           | 4    |
@@ -196,7 +198,7 @@ REDIS_URL=redis://localhost:6379/0
 > 若 API 也在容器內跑,則用服務名 `postgres` / `redis`——這部分 compose 會自動以
 > `environment:` 覆寫,你不用手動切。
 
-**偶爾做全容器 / parity 驗證**(需先補上 multi-stage uv `Dockerfile`):
+**偶爾做全容器 / parity 驗證**(multi-stage uv `Dockerfile` 已就緒):
 
 ```bash
 docker compose --profile full up      # 含 api
@@ -207,7 +209,7 @@ docker compose --profile full watch   # 改 code 自動同步進容器
 
 ## 跑測試
 
-> 目前尚無測試;測試會隨各迭代補上(見待辦)。
+> 迭代 1 已有 `POST /chat` 的 in-process 測試(`tests/`,Claude 被 mock);後續迭代持續補上。
 
 ```bash
 uv run pytest
@@ -219,8 +221,8 @@ uv run pytest
 
 把骨架變成「能拿去面試」的關鍵,就是把每個迭代做扎實。下面 TODO 標出所屬迭代:
 
-- **迭代 1(Walking Skeleton)**:加 `anthropic` 依賴、`POST /chat` 非串流接 Claude、`ANTHROPIC_API_KEY` 設定。
-- **迭代 2(串流)**:`/chat` 改 SSE 逐字回傳。
+- ~~**迭代 1(Walking Skeleton)**:加 `anthropic` 依賴、`POST /chat` 非串流接 Claude、`ANTHROPIC_API_KEY` 設定。~~ ✅ 完成
+- **迭代 2(串流,下一步)**:`/chat` 改 SSE 逐字回傳。
 - **迭代 3(持久化)**:接 Postgres + pgvector,uncomment `init_db.sql` 的 schema 並客製。
 - **迭代 4(文件)**:`POST /documents` 上傳 + **切塊策略**(從固定字數改成依語意 / 句子邊界,並說明取捨)+ embedding;支援 PDF / Word 解析。
 - **迭代 5(RAG)**:**檢索品質**(距離門檻過濾、調 `top_k`、進階 re-rank)、**引用來源**(標出答案來自哪個片段)。
