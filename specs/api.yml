@@ -6,8 +6,8 @@ info:
     RAG 服務 API —— 當前為 **Iteration 1(Walking Skeleton)**。
 
     本迭代只交付最薄的垂直切片:`POST /chat` 直接接 Claude(非串流、無對話歷史、無 RAG);
-    `GET /` 與 `GET /health` 為基礎端點。後續迭代(SSE 串流、Postgres/pgvector、文件匯入、
-    RAG、限流、監控)會擴充此契約。
+    `GET /` 與 `GET /health` 為基礎端點。後續迭代(SSE 串流、對話記憶、RAG(含文件匯入)、
+    上線品質(限流 / 監控))會擴充此契約。
 
     來源:`plans/iteration-1-walking-skeleton.md`。JSON 欄位採 snake_case。
 
@@ -73,7 +73,7 @@ paths:
         "500":
           description: |
             上游 LLM 呼叫失敗(逾時、限流、API 錯誤等)。
-            Iteration 1 刻意不做特別處理,錯誤自然冒出為 500;健全的錯誤處理排進後續迭代。
+            Iteration 1 刻意不做特別處理,錯誤自然冒出為 500;健全的錯誤處理排進迭代 5(上線品質)。
 
 components:
   schemas:

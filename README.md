@@ -22,13 +22,12 @@
 | ---- | --------------------- | -------------------------------------------------------- | -------- |
 | 1    | **Walking Skeleton**  | `POST /chat` → Claude → 一句回答。不串流 / 不接 DB / 不做 RAG | ✅ **完成** |
 | 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | 🚧 下一步 |
-| 3    | 持久化                | Postgres + pgvector 落地(對話 / 文件)                    | ⬜       |
-| 4    | 文件匯入              | `POST /documents` 上傳 + 切塊 + embedding                 | ⬜       |
-| 5    | 檢索 / RAG            | 檢索相近片段、組 Prompt + 對話歷史                        | ⬜       |
-| 6    | 限流                  | Redis 每 IP 每分鐘上限                                    | ⬜       |
-| 7    | 監控                  | `/metrics`(請求數、延遲、token 用量)                      | ⬜       |
+| 3    | 對話記憶              | 接 Postgres 存對話歷史、支援多輪                          | ⬜       |
+| 4    | 知識庫 / RAG          | `/documents` 上傳 → 切塊 → embedding → pgvector;`/chat` 先檢索再回答 | ⬜       |
+| 5    | 上線品質(Hardening)  | Redis 限流、健康檢查、錯誤處理、`/metrics`、補測試         | ⬜       |
+| 6    | 加分項                | PDF / Word 解析、檢索 re-rank、引用來源、滑動視窗限流      | ⬜       |
 
-**迭代 1、2** 只需要 Claude;**迭代 3 起** 才需要 postgres / redis 容器。
+**迭代 1、2** 只需要 Claude;**Postgres 從迭代 3 起**、**Redis 從迭代 5 起** 才需要容器。
 
 ---
 
@@ -151,19 +150,19 @@ docker compose --profile full up --build   # Dockerfile 已就緒
 | `src/fastapi_app_01/schemas/chat.py` | 請求 / 回應的 Pydantic 模型                   |
 | `Dockerfile`          | multi-stage uv 建置(可發布映像)              |
 | `tests/`              | `POST /chat` 的 in-process 測試(TestClient)  |
-| `scripts/init_db.sql` | 啟用 pgvector(建表 schema 仍為註解,待迭代 3)|
+| `scripts/init_db.sql` | 啟用 pgvector(建表 schema 仍為註解,對話表待迭代 3、向量表待迭代 4)|
 
 ### 後續迭代才加入(尚未存在)
 
 | 路徑                     | 職責                                          | 迭代 |
 | ------------------------ | --------------------------------------------- | ---- |
-| `app/db/database.py`     | PostgreSQL 連線池 / Redis client              | 3    |
+| `app/db/database.py`     | PostgreSQL 連線池(Redis client 待迭代 5)      | 3    |
 | `app/db/repository.py`   | 所有 SQL 集中於此                             | 3    |
 | `app/api/documents.py`   | 文件上傳 / 匯入端點                           | 4    |
 | `app/core/embeddings.py` | 文字轉向量(預設 OpenAI)                       | 4    |
-| `app/core/rag.py`        | **核心**:切塊 + 檢索 + Prompt 組裝(多處 TODO) | 5    |
-| `app/core/rate_limit.py` | Redis 限流                                    | 6    |
-| `app/api/health.py`      | 健康檢查(目前 inline 在 main.py)             | —    |
+| `app/core/rag.py`        | **核心**:切塊 + 檢索 + Prompt 組裝(多處 TODO) | 4    |
+| `app/core/rate_limit.py` | Redis 限流                                    | 5    |
+| `app/api/health.py`      | 健康檢查(目前 inline 在 main.py)             | 5    |
 
 ---
 
@@ -223,11 +222,10 @@ uv run pytest
 
 - ~~**迭代 1(Walking Skeleton)**:加 `anthropic` 依賴、`POST /chat` 非串流接 Claude、`ANTHROPIC_API_KEY` 設定。~~ ✅ 完成
 - **迭代 2(串流,下一步)**:`/chat` 改 SSE 逐字回傳。
-- **迭代 3(持久化)**:接 Postgres + pgvector,uncomment `init_db.sql` 的 schema 並客製。
-- **迭代 4(文件)**:`POST /documents` 上傳 + **切塊策略**(從固定字數改成依語意 / 句子邊界,並說明取捨)+ embedding;支援 PDF / Word 解析。
-- **迭代 5(RAG)**:**檢索品質**(距離門檻過濾、調 `top_k`、進階 re-rank)、**引用來源**(標出答案來自哪個片段)。
-- **迭代 6(限流)**:Redis 固定視窗 →(進階)滑動視窗或 token bucket。
-- **迭代 7(監控)**:`/metrics`(請求數、延遲、token 用量)。
+- **迭代 3(對話記憶)**:接 Postgres 存對話歷史、支援多輪;uncomment `init_db.sql` 的對話表 schema 並客製。
+- **迭代 4(知識庫 / RAG)**:`/documents` 上傳純文字 + **切塊策略**(從固定字數改成依語意 / 句子邊界,並說明取捨)+ embedding + pgvector;`/chat` 先檢索再回答(整條垂直切片)。
+- **迭代 5(上線品質)**:Redis 限流(固定視窗)、健康檢查、錯誤處理、`/metrics`(請求數、延遲、token 用量)、補 API 層測試。
+- **迭代 6(加分)**:PDF / Word 解析、檢索 **re-rank**、**引用來源**(標出答案來自哪個片段)、滑動視窗 / token bucket 限流。
 - **貫穿各迭代**:補 API 層測試,把 LLM / Embedding / DB mock 掉。
 
 > 小提醒:作業好不好,常不在「做了多少功能」,而在你能不能清楚講出**每個設計選擇的理由與取捨**。把你做的決定寫進這份 README,會比多寫一個功能更有說服力。
