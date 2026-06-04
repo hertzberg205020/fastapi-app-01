@@ -3,13 +3,13 @@ info:
   title: RAG Service API
   version: 0.1.0
   description: |
-    RAG 服務 API —— 當前為 **Iteration 1(Walking Skeleton)**。
+    RAG 服務 API —— 當前為 **Iteration 2(SSE 串流)**。
 
-    本迭代只交付最薄的垂直切片:`POST /chat` 直接接 Claude(非串流、無對話歷史、無 RAG);
-    `GET /` 與 `GET /health` 為基礎端點。後續迭代(SSE 串流、OpenAI 相容 `/v1/chat/completions`、
+    本迭代把 `POST /chat` 從非串流 JSON 改為**逐字 SSE 串流**(單輪、無對話歷史、無 RAG);
+    `GET /` 與 `GET /health` 為基礎端點。後續迭代(OpenAI 相容 `/v1/chat/completions`、
     對話記憶、RAG(含文件匯入)、上線品質(限流 / 監控))會擴充此契約。
 
-    來源:`plans/iteration-1-walking-skeleton.md`。JSON 欄位採 snake_case。
+    來源:`plans/iteration-2-streaming.md`。JSON 欄位採 snake_case。
 
 servers:
   - url: http://localhost:8000
@@ -49,8 +49,8 @@ paths:
       summary: Chat
       operationId: chat
       description: |
-        把單一問題送給 Claude,回傳一句答案。
-        Iteration 1:**非串流**、單輪、無 system prompt、無對話歷史、無檢索。
+        把單一問題送給 Claude,以 **SSE 逐字串流**回傳答案。
+        Iteration 2:**串流**、單輪、無 system prompt、無對話歷史、無檢索。
       requestBody:
         required: true
         content:
@@ -59,11 +59,21 @@ paths:
               $ref: "#/components/schemas/ChatRequest"
       responses:
         "200":
-          description: Claude 的回答
+          description: |
+            SSE 事件流(`text/event-stream`)。本文由多個事件組成,逐段推送文字 delta:
+
+            ```
+            data: {"text": "<delta>"}\n\n   ← 逐段(可多筆)
+            data: [DONE]\n\n                ← 結束標記
+            ```
+
+            每段 `text` 串接即完整答案;delta 以 JSON 包裝,故含換行也不破壞 SSE 框架。
+            注意:OpenAPI 對 SSE 描述力有限,線上契約(`{"text": ...}` + `[DONE]`)以此文字描述與測試把關。
           content:
-            application/json:
+            text/event-stream:
               schema:
-                $ref: "#/components/schemas/ChatResponse"
+                type: string
+                description: 'SSE 事件流;每行 `data: {"text": "..."}`,結尾 `data: [DONE]`。'
         "422":
           description: 請求驗證失敗(例如 `question` 為空字串)
           content:
@@ -117,16 +127,6 @@ components:
           examples: ["用一句話解釋什麼是 RAG"]
       required:
         - question
-
-    ChatResponse:
-      type: object
-      title: ChatResponse
-      properties:
-        answer:
-          type: string
-          description: Claude 產生的回答
-      required:
-        - answer
 
     # 以下兩個是 FastAPI 對請求驗證失敗(422)自動產生的標準結構,
     # 列出讓契約與實際回應吻合。

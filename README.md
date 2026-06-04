@@ -4,9 +4,11 @@
 
 但我們**不一次端出整套**。改成一個迭代一個迭代地推進,每次迭代交付一個**垂直切片(vertical slice)**——貫穿各層、能 `curl` 出結果的薄片,而非水平堆一層基礎建設。每一片都把最難的風險先打通。
 
-> ✅ **迭代 1(Walking Skeleton)已完成**:FastAPI + Docker 跑起來,`POST /chat` 直接接 Claude(**不串流、不接資料庫、不做 RAG**),host 與容器版 `curl` 都能拿到一句回答。最難的整條管線(容器、API key、路由)已打通——後面所有功能都是往這根骨架上長。
+> ✅ **迭代 1(Walking Skeleton)已完成**:FastAPI + Docker 跑起來,`POST /chat` 直接接 Claude(**不接資料庫、不做 RAG**),host 與容器版 `curl` 都能拿到回答。最難的整條管線(容器、API key、路由)已打通——後面所有功能都是往這根骨架上長。
 >
-> 🎯 **下一個迭代 = SSE 串流**:把 `/chat` 從一次回傳整段,改成逐字串流(Server-Sent Events)。骨架不變,只換回應方式。
+> ✅ **迭代 2(SSE 串流)已完成**:`/chat` 從一次回傳整段,改成逐字串流(Server-Sent Events,`data: {"text": "..."}` … `data: [DONE]`)。骨架不變,只換回應方式;host 與容器版 `curl -N` 都能看到逐字浮現。
+>
+> 🎯 **下一個迭代 = OpenAI 相容 `/v1`**:新增 `/v1/chat/completions`,把串流重塑成 OpenAI 相容格式,可直接接 Open WebUI 等前端。
 
 技術組合(終局)對應 JD 的基本條件:**FastAPI(REST + SSE 串流)、PostgreSQL + pgvector、Redis 限流、Anthropic Claude、Docker Compose**。
 
@@ -21,8 +23,8 @@
 | 迭代 | 名稱 | 內容 | 狀態 |
 | ---- | --------------------- | -------------------------------------------------------- | -------- |
 | 1    | **Walking Skeleton**  | `POST /chat` → Claude → 一句回答。不串流 / 不接 DB / 不做 RAG | ✅ **完成** |
-| 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | 🚧 下一步 |
-| 3    | OpenAI 相容 `/v1`     | 新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入 | ⬜       |
+| 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | ✅ **完成** |
+| 3    | OpenAI 相容 `/v1`     | 新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入 | 🚧 下一步 |
 | 4    | 對話記憶              | 接 Postgres 存對話歷史、支援多輪(伺服器端持久化)        | ⬜       |
 | 5    | 知識庫 / RAG          | `/documents` 上傳 → 切塊 → embedding → pgvector;`/chat` 先檢索再回答 | ⬜       |
 | 6    | 上線品質(Hardening)  | Redis 限流、健康檢查、錯誤處理、`/metrics`、補測試         | ⬜       |
@@ -34,12 +36,16 @@
 
 ## 架構
 
-### 當前(迭代 1):Walking Skeleton
+### 當前(迭代 2):Walking Skeleton + SSE 串流
 
 ```ascii
-   提問 ──POST /chat──▶ ┌──────────┐ ──▶ ┌────────┐ ──▶ 一句回答 (單一 JSON)
-                        │ FastAPI  │     │ Claude │
-                        └──────────┘     └────────┘
+   提問 ──POST /chat──▶ ┌──────────┐ ──messages.stream──▶ ┌────────┐
+       {"question"}     │ FastAPI  │ ◀──text delta──────── │ Claude │
+                        └────┬─────┘  逐段                  └────────┘
+                             │ 每段包成 SSE
+                             ▼  text/event-stream:
+                   data: {"text": "..."}\n\n   ← 逐段
+                   data: [DONE]\n\n            ← 結束標記
 ```
 
 ### 終局目標架構(後續迭代逐步補齊)
@@ -120,10 +126,11 @@ cp -n .env.example .env
 # 2. host 啟動 API(本迭代不需 postgres / redis)
 uv run uvicorn fastapi_app_01.main:app --reload
 
-# 3. 提問,拿到一句回答
-curl -X POST http://localhost:8000/chat \
+# 3. 提問,逐字串流收答案(-N 關掉 curl 緩衝,才看得到逐段浮現)
+curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"question": "用一句話解釋什麼是 RAG"}'
+#    → 逐段 data: {"text": "..."} ... 最後 data: [DONE]
 
 # 4. 互動式 API 文件
 open http://localhost:8000/docs
@@ -146,9 +153,9 @@ docker compose --profile full up --build   # Dockerfile 已就緒
 | --------------------- | --------------------------------------------- |
 | `src/fastapi_app_01/main.py`         | FastAPI 進入點;`GET /`、`GET /health`、註冊 chat router |
 | `src/fastapi_app_01/config.py`       | 用 pydantic-settings 集中讀取環境變數         |
-| `src/fastapi_app_01/api/chat.py`     | `POST /chat` 路由(迭代 1:非串流)            |
-| `src/fastapi_app_01/core/llm.py`     | 封裝 Anthropic 生成(`AsyncAnthropic`)        |
-| `src/fastapi_app_01/schemas/chat.py` | 請求 / 回應的 Pydantic 模型                   |
+| `src/fastapi_app_01/api/chat.py`     | `POST /chat` 路由(迭代 2:SSE 串流)          |
+| `src/fastapi_app_01/core/llm.py`     | 封裝 Anthropic 串流生成(`AsyncAnthropic`)    |
+| `src/fastapi_app_01/schemas/chat.py` | 請求的 Pydantic 模型(`ChatRequest`)          |
 | `Dockerfile`          | multi-stage uv 建置(可發布映像)              |
 | `tests/`              | `POST /chat` 的 in-process 測試(TestClient)  |
 | `scripts/init_db.sql` | 啟用 pgvector(建表 schema 仍為註解,對話表待迭代 4、向量表待迭代 5)|
@@ -223,8 +230,8 @@ uv run pytest
 把骨架變成「能拿去面試」的關鍵,就是把每個迭代做扎實。下面 TODO 標出所屬迭代:
 
 - ~~**迭代 1(Walking Skeleton)**:加 `anthropic` 依賴、`POST /chat` 非串流接 Claude、`ANTHROPIC_API_KEY` 設定。~~ ✅ 完成
-- **迭代 2(串流,下一步)**:`/chat` 改 SSE 逐字回傳。
-- **迭代 3(OpenAI 相容 `/v1`)**:新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入,無需伺服器端持久化。
+- ~~**迭代 2(串流)**:`/chat` 改 SSE 逐字回傳(`data: {"text": "..."}` … `data: [DONE]`)。~~ ✅ 完成
+- **迭代 3(OpenAI 相容 `/v1`,下一步)**:新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入,無需伺服器端持久化。
 - **迭代 4(對話記憶)**:接 Postgres 存對話歷史、支援多輪(伺服器端持久化);uncomment `init_db.sql` 的對話表 schema 並客製。
 - **迭代 5(知識庫 / RAG)**:`/documents` 上傳純文字 + **切塊策略**(從固定字數改成依語意 / 句子邊界,並說明取捨)+ embedding + pgvector;`/chat` 先檢索再回答(整條垂直切片)。
 - **迭代 6(上線品質)**:Redis 限流(固定視窗)、健康檢查、錯誤處理、`/metrics`(請求數、延遲、token 用量)、補 API 層測試。

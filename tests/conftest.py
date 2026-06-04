@@ -12,13 +12,31 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(monkeypatch):
-    """In-process client with Claude mocked at the llm.answer seam."""
+    """In-process client with Claude mocked at the llm.stream_answer seam."""
     from fastapi_app_01.core import llm
 
-    async def fake_answer(question: str) -> str:
-        return f"stub answer for: {question}"
+    async def fake_stream(question: str):
+        for chunk in ["stub ", "answer ", f"for: {question}"]:
+            yield chunk
 
-    monkeypatch.setattr(llm, "answer", fake_answer)
+    monkeypatch.setattr(llm, "stream_answer", fake_stream)
+
+    from fastapi_app_01.main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def newline_client(monkeypatch):
+    """Like `client`, but the stubbed deltas contain a newline (tests SSE framing)."""
+    from fastapi_app_01.core import llm
+
+    async def newline_stream(question: str):
+        for chunk in ["line1\n", "line2"]:
+            yield chunk
+
+    monkeypatch.setattr(llm, "stream_answer", newline_stream)
 
     from fastapi_app_01.main import app
 

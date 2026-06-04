@@ -1,5 +1,9 @@
 # Tech Stack — Iteration 1(Walking Skeleton)
 
+> **定位**:本檔為 **迭代 1** 技術棧參考;**迭代 2 的串流變更**(`/chat` 改 SSE、`messages.stream`、
+> 移除 `ChatResponse`)見 `plans/iteration-2-streaming.md`。檔內 `messages.create` / `r.json()["answer"]`
+> 等為**迭代 1 範例**,請勿當成最新狀態。
+>
 > **用途**:給 Claude Code 與其他開發工具當參考 context——本專案在 **iteration 1** 用到哪些技術、
 > 版本、怎麼用、有什麼慣例、以及**怎麼驗收**。
 >
@@ -114,7 +118,7 @@
   )
   answer = msg.content[0].text                  # 非串流:取第一個 content block 的 text
   ```
-- **注意**:iteration 1 非串流;迭代 2 才改 `client.messages.stream(...)`。
+- **注意**:此為 iteration 1 非串流範例;**迭代 2 已採用** `client.messages.stream(...)` 逐字串流(見 `plans/iteration-2-streaming.md`)。
 - **文件**:SDK https://github.com/anthropics/anthropic-sdk-python ・ API https://docs.anthropic.com/en/api/
 
 ### pytest + FastAPI TestClient + httpx
