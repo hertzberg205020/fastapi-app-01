@@ -56,5 +56,25 @@ services:
       timeout: 3s
       retries: 5
 
+  # Iteration 3: opt-in graphical chat UI over the OpenAI-compatible /v1 endpoints.
+  # Gated behind its own "webui" profile so default `docker compose up` ignores it.
+  # OPENAI_API_BASE_URL defaults to the host's API (hybrid mode: API on host via
+  # `--host 0.0.0.0`); for the all-in-container run override it to the service name:
+  #   OPENWEBUI_API_BASE=http://api:8000/v1 docker compose --profile full --profile webui up
+  # No depends_on (sticking with compose B's spirit — in hybrid mode `api` isn't in compose).
+  openwebui:
+    profiles: ["webui"]
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "3000:8080"
+    environment:
+      OPENAI_API_BASE_URL: ${OPENWEBUI_API_BASE:-http://host.docker.internal:8000/v1}
+      OPENAI_API_KEY: dummy  # we don't validate Authorization (D6)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # let the container reach the host (also on Linux)
+    volumes:
+      - openwebui-data:/app/backend/data  # persist login / settings across restarts
+
 volumes:
   pgdata-fastapi-app-01:
+  openwebui-data:

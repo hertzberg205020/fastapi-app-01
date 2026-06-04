@@ -8,7 +8,9 @@
 >
 > ✅ **迭代 2(SSE 串流)已完成**:`/chat` 從一次回傳整段,改成逐字串流(Server-Sent Events,`data: {"text": "..."}` … `data: [DONE]`)。骨架不變,只換回應方式;host 與容器版 `curl -N` 都能看到逐字浮現。
 >
-> 🎯 **下一個迭代 = OpenAI 相容 `/v1`**:新增 `/v1/chat/completions`,把串流重塑成 OpenAI 相容格式,可直接接 Open WebUI 等前端。
+> ✅ **迭代 3(OpenAI 相容 `/v1`)已完成**:新增 `POST /v1/chat/completions`(串流 + 非串流)與 `GET /v1/models`,把 Claude 串流重塑成 OpenAI 線上格式,可直接接 **Open WebUI** 等前端對話;多輪歷史由前端帶入。`/chat`(迭代 2)原樣保留。
+>
+> 🎯 **下一個迭代 = 對話記憶**:接 Postgres 存對話歷史、支援伺服器端多輪。
 
 技術組合(終局)對應 JD 的基本條件:**FastAPI(REST + SSE 串流)、PostgreSQL + pgvector、Redis 限流、Anthropic Claude、Docker Compose**。
 
@@ -24,8 +26,8 @@
 | ---- | --------------------- | -------------------------------------------------------- | -------- |
 | 1    | **Walking Skeleton**  | `POST /chat` → Claude → 一句回答。不串流 / 不接 DB / 不做 RAG | ✅ **完成** |
 | 2    | SSE 串流              | `/chat` 改逐字串流回傳(Server-Sent Events)               | ✅ **完成** |
-| 3    | OpenAI 相容 `/v1`     | 新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入 | 🚧 下一步 |
-| 4    | 對話記憶              | 接 Postgres 存對話歷史、支援多輪(伺服器端持久化)        | ⬜       |
+| 3    | OpenAI 相容 `/v1`     | 新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入 | ✅ **完成** |
+| 4    | 對話記憶              | 接 Postgres 存對話歷史、支援多輪(伺服器端持久化)        | 🚧 下一步 |
 | 5    | 知識庫 / RAG          | `/documents` 上傳 → 切塊 → embedding → pgvector;`/chat` 先檢索再回答 | ⬜       |
 | 6    | 上線品質(Hardening)  | Redis 限流、健康檢查、錯誤處理、`/metrics`、補測試         | ⬜       |
 | 7    | 加分項                | PDF / Word 解析、檢索 re-rank、引用來源、滑動視窗限流      | ⬜       |
@@ -36,7 +38,7 @@
 
 ## 架構
 
-### 當前(迭代 2):Walking Skeleton + SSE 串流
+### 當前(迭代 3):Walking Skeleton + SSE 串流 + OpenAI 相容 `/v1`
 
 ```ascii
    提問 ──POST /chat──▶ ┌──────────┐ ──messages.stream──▶ ┌────────┐
@@ -46,6 +48,13 @@
                              ▼  text/event-stream:
                    data: {"text": "..."}\n\n   ← 逐段
                    data: [DONE]\n\n            ← 結束標記
+
+   Open WebUI ──POST /v1/chat/completions──▶ ┌──────────────┐ ──_split: system / messages──▶ ┌────────┐
+       {model, messages[], stream}           │ openai_compat │ ◀──text delta / 完整回應──────── │ Claude │
+                                              └──────┬───────┘                                  └────────┘
+              ──GET /v1/models──▶ 模型下拉              │ 重塑為 OpenAI 格式
+                                                       ▼  stream=true → chat.completion.chunk … [DONE]
+                                                          stream=false → chat.completion + usage
 ```
 
 ### 終局目標架構(後續迭代逐步補齊)
@@ -132,6 +141,14 @@ curl -N -X POST http://localhost:8000/chat \
   -d '{"question": "用一句話解釋什麼是 RAG"}'
 #    → 逐段 data: {"text": "..."} ... 最後 data: [DONE]
 
+# 3b.(迭代 3)OpenAI 相容端點:列模型 + 串流對話
+curl -s http://localhost:8000/v1/models
+curl -N -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"stream": true, "messages": [{"role": "user", "content": "用一句話解釋什麼是 RAG"}]}'
+#    → 逐段 data: {"object":"chat.completion.chunk", ...} ... 最後 data: [DONE]
+#    （stream=false 則回單一 chat.completion JSON,含 usage）
+
 # 4. 互動式 API 文件
 open http://localhost:8000/docs
 ```
@@ -151,20 +168,21 @@ docker compose --profile full up --build   # Dockerfile 已就緒
 
 | 路徑                  | 職責                                          |
 | --------------------- | --------------------------------------------- |
-| `src/fastapi_app_01/main.py`         | FastAPI 進入點;`GET /`、`GET /health`、註冊 chat router |
+| `src/fastapi_app_01/main.py`         | FastAPI 進入點;`GET /`、`GET /health`、註冊 chat + openai_compat router |
 | `src/fastapi_app_01/config.py`       | 用 pydantic-settings 集中讀取環境變數         |
 | `src/fastapi_app_01/api/chat.py`     | `POST /chat` 路由(迭代 2:SSE 串流)          |
-| `src/fastapi_app_01/core/llm.py`     | 封裝 Anthropic 串流生成(`AsyncAnthropic`)    |
-| `src/fastapi_app_01/schemas/chat.py` | 請求的 Pydantic 模型(`ChatRequest`)          |
+| `src/fastapi_app_01/api/openai_compat.py` | OpenAI 相容 `/v1/chat/completions`、`/v1/models`(迭代 3:轉接層) |
+| `src/fastapi_app_01/core/llm.py`     | 封裝 Anthropic 生成:`stream_answer`(單輪)、`stream_chat` / `complete_chat`(多輪 + system) |
+| `src/fastapi_app_01/schemas/chat.py` | `/chat` 請求模型(`ChatRequest`)              |
+| `src/fastapi_app_01/schemas/openai.py` | `/v1` 請求模型(`ChatMessage`、`ChatCompletionRequest`,容忍未知欄位) |
 | `Dockerfile`          | multi-stage uv 建置(可發布映像)              |
-| `tests/`              | `POST /chat` 的 in-process 測試(TestClient)  |
+| `tests/`              | `POST /chat` 與 `/v1` 的 in-process 測試(TestClient)  |
 | `scripts/init_db.sql` | 啟用 pgvector(建表 schema 仍為註解,對話表待迭代 4、向量表待迭代 5)|
 
 ### 後續迭代才加入(尚未存在)
 
 | 路徑                     | 職責                                          | 迭代 |
 | ------------------------ | --------------------------------------------- | ---- |
-| `app/api/openai_compat.py` | OpenAI 相容 `/v1/chat/completions`(接 Open WebUI) | 3    |
 | `app/db/database.py`     | PostgreSQL 連線池(Redis client 待迭代 6)      | 4    |
 | `app/db/repository.py`   | 所有 SQL 集中於此                             | 4    |
 | `app/api/documents.py`   | 文件上傳 / 匯入端點                           | 5    |
@@ -215,12 +233,12 @@ docker compose --profile full watch   # 改 code 自動同步進容器
 
 ---
 
-## Open WebUI 串接(迭代 3,規劃中 🚧)
+## Open WebUI 串接(迭代 3 ✅)
 
-> 迭代 3 會新增 OpenAI 相容的 `POST /v1/chat/completions` 與 `GET /v1/models`,屆時可用 **Open WebUI** 圖形介面對話。
-> 以下指令在**迭代 3 落地後**可用(目前 `/v1` 端點與 compose 的 `openwebui` 服務尚未存在)。多輪歷史由前端帶入,無需伺服器端持久化。
+> 迭代 3 已新增 OpenAI 相容的 `POST /v1/chat/completions`(串流 + 非串流)與 `GET /v1/models`,
+> 可用 **Open WebUI** 圖形介面直接對話。多輪歷史由前端帶入,無需伺服器端持久化。
 
-compose 會新增一個 `openwebui` 服務(profile `webui`,opt-in,不綁預設啟動)。兩種跑法:
+compose 內有一個 `openwebui` 服務(profile `webui`,opt-in,不綁預設啟動)。兩種跑法:
 
 ```bash
 # 混合(日常):API 跑 host(綁 0.0.0.0),compose 只起 UI
@@ -253,8 +271,8 @@ uv run pytest
 
 - ~~**迭代 1(Walking Skeleton)**:加 `anthropic` 依賴、`POST /chat` 非串流接 Claude、`ANTHROPIC_API_KEY` 設定。~~ ✅ 完成
 - ~~**迭代 2(串流)**:`/chat` 改 SSE 逐字回傳(`data: {"text": "..."}` … `data: [DONE]`)。~~ ✅ 完成
-- **迭代 3(OpenAI 相容 `/v1`,下一步)**:新增 `/v1/chat/completions`(OpenAI 相容、串流),可接 Open WebUI 等前端;多輪歷史由前端帶入,無需伺服器端持久化。
-- **迭代 4(對話記憶)**:接 Postgres 存對話歷史、支援多輪(伺服器端持久化);uncomment `init_db.sql` 的對話表 schema 並客製。
+- ~~**迭代 3(OpenAI 相容 `/v1`)**:新增 `/v1/chat/completions`(OpenAI 相容、串流)+ `GET /v1/models`,可接 Open WebUI 等前端;多輪歷史由前端帶入,無需伺服器端持久化。~~ ✅ 完成
+- **迭代 4(對話記憶,下一步)**:接 Postgres 存對話歷史、支援多輪(伺服器端持久化);uncomment `init_db.sql` 的對話表 schema 並客製。
 - **迭代 5(知識庫 / RAG)**:`/documents` 上傳純文字 + **切塊策略**(從固定字數改成依語意 / 句子邊界,並說明取捨)+ embedding + pgvector;`/chat` 先檢索再回答(整條垂直切片)。
 - **迭代 6(上線品質)**:Redis 限流(固定視窗)、健康檢查、錯誤處理、`/metrics`(請求數、延遲、token 用量)、補 API 層測試。
 - **迭代 7(加分)**:PDF / Word 解析、檢索 **re-rank**、**引用來源**(標出答案來自哪個片段)、滑動視窗 / token bucket 限流。

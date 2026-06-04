@@ -3,13 +3,15 @@ info:
   title: RAG Service API
   version: 0.1.0
   description: |
-    RAG 服務 API —— 當前為 **Iteration 2(SSE 串流)**。
+    RAG 服務 API —— 當前為 **Iteration 3(OpenAI 相容 `/v1`)**。
 
-    本迭代把 `POST /chat` 從非串流 JSON 改為**逐字 SSE 串流**(單輪、無對話歷史、無 RAG);
-    `GET /` 與 `GET /health` 為基礎端點。後續迭代(OpenAI 相容 `/v1/chat/completions`、
-    對話記憶、RAG(含文件匯入)、上線品質(限流 / 監控))會擴充此契約。
+    本迭代**新增**對外相容層:OpenAI 相容的 `POST /v1/chat/completions`(串流 + 非串流)與
+    `GET /v1/models`,把既有 Claude 串流重塑成 OpenAI 線上格式,讓 Open WebUI 等前端直接可用。
+    多輪歷史由前端帶在 `messages` 陣列送入(無伺服器端持久化)。迭代 2 的 `POST /chat`(自訂 SSE)
+    **原樣保留**;`GET /` 與 `GET /health` 為基礎端點。後續迭代(對話記憶、RAG(含文件匯入)、
+    上線品質(限流 / 監控))會擴充此契約。
 
-    來源:`plans/iteration-2-streaming.md`。JSON 欄位採 snake_case。
+    來源:`plans/iteration-3-openai-compat.md`。JSON 欄位採 snake_case。
 
 servers:
   - url: http://localhost:8000
@@ -85,6 +87,67 @@ paths:
             上游 LLM 呼叫失敗(逾時、限流、API 錯誤等)。
             Iteration 1 刻意不做特別處理,錯誤自然冒出為 500;健全的錯誤處理排進迭代 6(上線品質)。
 
+  /v1/chat/completions:
+    post:
+      summary: Chat Completions (OpenAI-compatible)
+      operationId: chat_completions
+      description: |
+        OpenAI 相容的對話端點。把 OpenAI `messages`(含 `system`/`user`/`assistant`)轉接成
+        Anthropic 呼叫,再把回應重塑為 OpenAI 線上格式。多輪歷史由前端帶在 `messages`,本迭代無伺服器端持久化。
+
+        Iteration 3:依 `stream` 旗標分流——`true` 走 SSE `chat.completion.chunk` 事件流,`false` 回單一 `chat.completion` JSON。
+        請求的 `model` 被忽略(一律用伺服器設定的 model);`Authorization` 收到即忽略(本機不驗證)。
+        只處理 `content` 為字串的訊息(不支援多模態 content parts、tools、`logprobs`)。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: |
+            依 `stream` 旗標回兩種格式之一:
+
+            - `stream=true` → `text/event-stream`:逐段推送 `chat.completion.chunk` 事件,
+              末塊帶 `finish_reason`,最後送 `data: [DONE]`。
+              ```
+              data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"<delta>"}}]}\n\n
+              data: [DONE]\n\n
+              ```
+              注意:OpenAPI 對 SSE 描述力有限,線上 chunk 契約以此文字描述與測試把關。
+            - `stream=false` → `application/json`:單一 `chat.completion`,含 `choices[].message.content`、
+              `finish_reason` 與 `usage`。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: 'SSE 事件流;每段 `data: {"object":"chat.completion.chunk", ...}`,結尾 `data: [DONE]`。'
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletion"
+        "422":
+          description: 請求驗證失敗(例如 `messages` 為空陣列)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
+
+  /v1/models:
+    get:
+      summary: List Models (OpenAI-compatible)
+      operationId: list_models
+      description: |
+        OpenAI 相容的模型清單。Open WebUI 靠它填模型下拉選單。
+        Iteration 3:回單一模型,`id` 即伺服器目前使用的 Claude model。
+      responses:
+        "200":
+          description: 模型清單
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+
 components:
   schemas:
     RootResponse:
@@ -127,6 +190,62 @@ components:
           examples: ["用一句話解釋什麼是 RAG"]
       required:
         - question
+
+    # ---- OpenAI 相容 `/v1`(迭代 3)----
+
+    ChatMessage:
+      type: object
+      title: ChatMessage
+      properties:
+        role:
+          type: string
+          description: 訊息角色;本迭代處理 `system` / `user` / `assistant`
+          examples: ["user"]
+        content:
+          type: string
+          description: 訊息純文字內容(不支援多模態 content parts)
+      required:
+        - role
+        - content
+
+    ChatCompletionRequest:
+      type: object
+      title: ChatCompletionRequest
+      description: |
+        OpenAI 相容請求。**容忍其他 OpenAI 欄位**(`temperature`、`top_p`、`stream_options` 等),
+        多送不報錯;`model` 會被忽略(一律用伺服器設定的 model)。
+      properties:
+        model:
+          type: string
+          description: 被忽略;保留以相容 OpenAI 用戶端
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+          description: true → SSE chunk 串流;false → 單一 JSON
+        max_tokens:
+          type: integer
+          description: 選填;未帶則用伺服器預設
+      required:
+        - messages
+
+    ChatCompletion:
+      type: object
+      title: ChatCompletion
+      description: |
+        OpenAI 相容的非串流回應(`stream=false`)。欄位形狀如下(描述層級;線上契約由測試把關):
+        `id`、`object="chat.completion"`、`created`、`model`、
+        `choices[].message.{role,content}`、`choices[].finish_reason`、`usage.{prompt_tokens,completion_tokens,total_tokens}`。
+
+    ModelList:
+      type: object
+      title: ModelList
+      description: |
+        OpenAI 相容的模型清單:`{object:"list", data:[{id, object:"model", created, owned_by}]}`。
 
     # 以下兩個是 FastAPI 對請求驗證失敗(422)自動產生的標準結構,
     # 列出讓契約與實際回應吻合。

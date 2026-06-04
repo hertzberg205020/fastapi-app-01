@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 
 from fastapi_app_01.api.chat import router as chat_router
+from fastapi_app_01.api.openai_compat import router as openai_router
 from fastapi_app_01.config import settings
 
 app = FastAPI()
 app.include_router(chat_router)
+app.include_router(openai_router)
 
 
 @app.get("/")

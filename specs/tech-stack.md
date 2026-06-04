@@ -1,8 +1,9 @@
 # Tech Stack — Iteration 1(Walking Skeleton)
 
 > **定位**:本檔為 **迭代 1** 技術棧參考;**迭代 2 的串流變更**(`/chat` 改 SSE、`messages.stream`、
-> 移除 `ChatResponse`)見 `plans/iteration-2-streaming.md`。檔內 `messages.create` / `r.json()["answer"]`
-> 等為**迭代 1 範例**,請勿當成最新狀態。
+> 移除 `ChatResponse`)見 `plans/iteration-2-streaming.md`;**迭代 3 已加 OpenAI 相容 `/v1`**
+> (`/v1/chat/completions`、`/v1/models`、多輪 + system 轉接)見 `plans/iteration-3-openai-compat.md`。
+> 檔內 `messages.create` / `r.json()["answer"]` 等為**迭代 1 範例**,請勿當成最新狀態。
 >
 > **用途**:給 Claude Code 與其他開發工具當參考 context——本專案在 **iteration 1** 用到哪些技術、
 > 版本、怎麼用、有什麼慣例、以及**怎麼驗收**。
