@@ -245,7 +245,7 @@ fastapi-app-01/
 │   ├── conftest.py            #   env + mock Claude + client / api_client fixtures
 │   ├── test_chat.py           #   in-process /chat
 │   └── test_e2e.py            #   黑箱 E2E(選用)
-├── scripts/init_db.sql        # 既有:pgvector(schema 仍註解,對話表迭代 3、向量表迭代 4)
+├── scripts/init_db.sql        # 既有:pgvector(schema 仍註解,對話表迭代 4、向量表迭代 5)
 ├── docker-compose.yml         # 既有:api 在 full profile
 ├── Dockerfile                 # 預計(iteration 1):multi-stage uv
 ├── pyproject.toml / uv.lock   # 既有
@@ -291,12 +291,12 @@ docker compose --profile full up --build
 
 | 技術 | 角色 | 預計迭代 |
 | ----------------------- | ----------------------- | ------ |
-| PostgreSQL(`pgvector/pgvector:pg16`) | 對話歷史持久化 | 迭代 3 |
-| pgvector(同上映像) | 向量儲存 / 檢索 | 迭代 4 |
-| OpenAI embeddings(或等價) | 文字轉向量 | 迭代 4 |
-| Redis(`redis:7-alpine`) | 限流 | 迭代 5 |
-| 監控 / metrics | `/metrics` 觀測 | 迭代 5 |
-| **Testcontainers + SQLAlchemy** E2E | 對真 DB 的整合測試與隔離 | 迭代 3+(接 DB 後) |
+| PostgreSQL(`pgvector/pgvector:pg16`) | 對話歷史持久化 | 迭代 4 |
+| pgvector(同上映像) | 向量儲存 / 檢索 | 迭代 5 |
+| OpenAI embeddings(或等價) | 文字轉向量 | 迭代 5 |
+| Redis(`redis:7-alpine`) | 限流 | 迭代 6 |
+| 監控 / metrics | `/metrics` 觀測 | 迭代 6 |
+| **Testcontainers + SQLAlchemy** E2E | 對真 DB 的整合測試與隔離 | 迭代 4+(接 DB 後) |
 
 ---
 
