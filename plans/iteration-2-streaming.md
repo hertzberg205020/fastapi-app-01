@@ -99,6 +99,11 @@
 ## 執行步驟
 
 > 每步標**動到的檔案**與**預計程式碼**。實作以 `anthropic` 當前 SDK 為準(已用 context7 確認 `messages.stream` / `text_stream`)。
+>
+> **開發順序(輕量 spec-first)**:先改**契約**(`specs/api.yml`,Step 1)→ 依約實作(Step 2–4)→
+> 測試斷言契約(Step 5)→ host 驗收並比對「程式產生的 `/openapi.json` vs `api.yml`」不漂移(Step 6)→
+> 容器發布(Step 7)→ 最後補**敘述**文件(README / tech-stack,Step 8)。契約與敘述分開:
+> 契約先行驅動實作,敘述最後對齊;全部在同一 feature 分支整批合併,故 `main` 不會出現「文件超前程式」。
 
 ### Step 0 — 開分支
 
@@ -106,7 +111,18 @@
 git switch -c feat/iteration-2-streaming
 ```
 
-### Step 1 — `core/llm.py`:`answer()` → `stream_answer()`
+### Step 1 — spec-first:先更新 `specs/api.yml` 契約
+
+> 先改契約、再依約實作。本步**只動契約**(`api.yml`);敘述文件(README / tech-stack)留到 Step 8。
+
+動到 `specs/api.yml`:
+- `info.description`:頂部「當前為 **Iteration 1(Walking Skeleton)**」與「`POST /chat`…(**非串流**、無對話歷史、無 RAG)」兩句改為反映迭代 2 串流;`SSE 串流` 自「後續迭代」清單移除(已交付)。
+- `/chat` 的 `200`:從 `$ref: ChatResponse` 改描述為 `text/event-stream`(SSE 事件流,`data: {"text": "..."}` + `data: [DONE]`)。
+- 移除孤兒 `ChatResponse` schema(grep 確認無其他 `$ref`);`422` / `RootResponse` / `HealthResponse` 不變。
+
+> verify:`api.yml` 仍為合法 YAML;Step 2–5 的實作以此契約為準。
+
+### Step 2 — `core/llm.py`:`answer()` → `stream_answer()`
 
 動到 `src/fastapi_app_01/core/llm.py`。client 建立方式不變,把非串流 `messages.create`
 換成 `messages.stream` 的非同步產生器,逐段 yield 純文字(**保持傳輸無關**——SSE 格式化留給 api 層)。
@@ -133,7 +149,7 @@ async def stream_answer(question: str) -> AsyncIterator[str]:
             yield text
 ```
 
-### Step 2 — `api/chat.py`:回 `StreamingResponse`(SSE)
+### Step 3 — `api/chat.py`:回 `StreamingResponse`(SSE)
 
 動到 `src/fastapi_app_01/api/chat.py`。新增一個把 `llm.stream_answer` 逐段包成 SSE 的
 async generator;端點回 `StreamingResponse(..., media_type="text/event-stream")`。
@@ -166,7 +182,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
 > 註:`response_model=ChatResponse` 拿掉了(串流不走 Pydantic 序列化)。`ensure_ascii=False` 讓中文不被轉成 `\uXXXX`。
 
-### Step 3 — `schemas/chat.py`:移除孤兒 `ChatResponse`(決策 D4)
+### Step 4 — `schemas/chat.py`:移除孤兒 `ChatResponse`(決策 D4)
 
 ```python
 # 預計:src/fastapi_app_01/schemas/chat.py
@@ -179,7 +195,7 @@ class ChatRequest(BaseModel):
 
 > `main.py` 不需改(只 `include_router`,未直接引用 `ChatResponse`)。動工前先 grep 確認 `ChatResponse` 無其他引用。
 
-### Step 4 — 更新測試:斷言串流契約
+### Step 5 — 更新測試:斷言串流契約
 
 動到 `tests/conftest.py` 與 `tests/test_chat.py`。共三條測試(對應下節「驗收與測試策略」的 Layer 1)。
 
@@ -245,9 +261,9 @@ def test_newline_delta_stays_one_frame(newline_client):
 ```
 
 > `TestClient`(httpx)會把串流回應**緩衝**成完整本文,`r.text` 即整段 SSE,足以斷言契約。
-> 真正的「逐 token 增量遞送」測不準(見下節邊界),靠 Step 5 的 `curl -N` 肉眼確認。
+> 真正的「逐 token 增量遞送」測不準(見下節邊界),靠 Step 6 的 `curl -N` 肉眼確認。
 
-### Step 5 — host 手動驗證(開發完成)
+### Step 6 — host 手動驗證 + 契約比對(開發完成)
 
 ```bash
 uv run uvicorn fastapi_app_01.main:app --reload
@@ -259,18 +275,9 @@ curl -N -X POST http://localhost:8000/chat \
 # 期望 → 逐段印出 data: {"text":"..."} ... 最後 data: [DONE]
 ```
 
-### Step 6 — 文件對齊
-
-> 原則:specs 描述的是**已交付狀態**,故這些變更與程式**同批**進,避免文件先於程式宣稱串流。
-
-- `specs/api.yml`(單一真實契約,須完整更新到迭代 2):
-  - `info.description`:頂部「當前為 **Iteration 1(Walking Skeleton)**」與「`POST /chat`…(**非串流**、無對話歷史、無 RAG)」兩句改為反映迭代 2 串流;`SSE 串流` 從「後續迭代」清單移除(已交付)。
-  - `/chat` 的 `200`:從 `$ref: ChatResponse` 改描述為 `text/event-stream`(SSE 事件流,`data: {"text": "..."}` + `data: [DONE]`)。
-  - `ChatResponse` schema 變孤兒 → 移除(grep 確認無其他 `$ref`)。`422`、`RootResponse`、`HealthResponse` 不變。
-- `README.md`:迭代藍圖第 2 列狀態 🚧→✅;迭代 1/2 區塊與「快速啟動」的 `curl` 範例補 `-N` 與 SSE 說明;架構圖標示串流回應。
-- `specs/tech-stack.md`(維持其「迭代 1 技術棧」定位,**不擴大範圍**):
-  - 開頭加一句定位說明:「本檔為**迭代 1**技術棧參考;迭代 2 的串流變更見 `plans/iteration-2-streaming.md`」,避免讀者誤把檔內 `messages.create` / `r.json()["answer"]` 等**迭代 1 範例**當成最新。
-  - 不逐處改寫該檔的非串流範例(它們是迭代 1 的忠實紀錄);僅 `anthropic` 段第 117 行「迭代 2 才改 `messages.stream`」可順手點明「迭代 2 已採用」。
+> **契約比對(SDD 的驗證環)**:FastAPI 由程式碼產生 `/openapi.json`,而 `specs/api.yml` 是手寫契約。
+> 開 `http://localhost:8000/openapi.json`(或 `/docs`),確認 `/chat` 已**不再**宣告 `ChatResponse`、
+> `ChatRequest` 仍為 `minLength 1`,與 Step 1 改好的 `api.yml` 一致(兩份 spec 不漂移)。
 
 ### Step 7 — 發布驗證(收工前)
 
@@ -282,6 +289,15 @@ curl -N -X POST http://localhost:8000/chat -H 'Content-Type: application/json' \
 docker compose --profile full down
 ```
 
+### Step 8 — 敘述文件對齊(收工前)
+
+> 契約(`api.yml`)已於 Step 1 先行。此處只補**敘述類**文件,與程式同批合併,不影響契約。
+
+- `README.md`:迭代藍圖第 2 列狀態 🚧→✅;迭代 1/2 區塊與「快速啟動」的 `curl` 範例補 `-N` 與 SSE 說明;架構圖標示串流回應。
+- `specs/tech-stack.md`(維持其「迭代 1 技術棧」定位,**不擴大範圍**):
+  - 開頭加一句定位說明:「本檔為**迭代 1**技術棧參考;迭代 2 的串流變更見 `plans/iteration-2-streaming.md`」,避免讀者誤把檔內 `messages.create` / `r.json()["answer"]` 等**迭代 1 範例**當成最新。
+  - 不逐處改寫該檔的非串流範例(它們是迭代 1 的忠實紀錄);僅 `anthropic` 段第 117 行「迭代 2 才改 `messages.stream`」可順手點明「迭代 2 已採用」。
+
 ---
 
 ## 驗收與測試策略
@@ -290,7 +306,7 @@ docker compose --profile full down
 
 | 層 | 做什麼 | 涵蓋 AC | 計費 |
 | --- | ----------------------------------------- | -------------- | ---- |
-| 1 自動測試(in-process,mock) | `uv run pytest`,mock `llm.stream_answer`;見 Step 4 三條 | 1–6 | 否 |
+| 1 自動測試(in-process,mock) | `uv run pytest`,mock `llm.stream_answer`;見 Step 5 三條 | 1–6 | 否 |
 | 2 啟動冒煙 | dummy key 起 app,`/health` 回 200 | 7、8 | 否 |
 | 3 config 行為 | `env -u ANTHROPIC_API_KEY` 確認 fail-fast | 7 | 否 |
 | 4 容器冒煙 | `docker build` + `compose --profile full up` 起得來 | 9(形狀) | 否 |

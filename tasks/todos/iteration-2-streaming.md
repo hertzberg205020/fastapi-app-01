@@ -4,12 +4,15 @@
 > plan 講「為什麼 / 怎麼做」,本清單講「做了沒 / 怎麼確認」。
 >
 > **來源**:`plans/iteration-2-streaming.md`(步驟、決策、DoD)、`specs/api.yml`(端點契約)、
-> `specs/tech-stack.md`(技術棧與測試模式)。任務代號 **T0–T7** 對應 plan 的 Step 0–7。
+> `specs/tech-stack.md`(技術棧與測試模式)。任務代號 **T0–T8** 對應 plan 的 Step 0–8。
 >
 > **本質**:骨架不變,只把 `POST /chat` 的回應方式從「非串流 JSON」換成「SSE 逐字串流」。
 >
-> **原則**:不擴張範圍、不與 plan 的決策(D1–D5)衝突。本迭代的**硬性收工條件**包含
-> 「自動測試綠燈 + `curl -N` live 串流 + 容器發布驗證」(與迭代 1 不同,自動測試已是 DoD)。
+> **開發順序(輕量 spec-first)**:先改**契約**(`api.yml`,T1)→ 依約實作(T2–T4)→ 測試斷言契約(T5)
+> → host 驗收並比對 `/openapi.json` 與 `api.yml` 不漂移(T6)→ 容器發布(T7)→ 最後補**敘述**文件(T8)。
+> 契約先行驅動實作,敘述最後對齊;全程在同一 feature 分支,整批合併,故 `main` 不會出現「文件超前程式」。
+>
+> **原則**:不擴張範圍、不與決策(D1–D5)衝突。本迭代**硬性收工條件**含「自動測試綠燈 + `curl -N` live 串流 + 容器發布驗證」。
 
 ---
 
@@ -35,12 +38,13 @@
       `core/llm.py` 有 `async def answer() -> str`(`messages.create`);
       `api/chat.py` 回 `ChatResponse`(`response_model=ChatResponse`);
       `schemas/chat.py` 有 `ChatRequest` + `ChatResponse`;
-      `tests/test_chat.py` 斷言 `r.json()["answer"]`;`tests/conftest.py` monkeypatch `llm.answer`。
+      `tests/test_chat.py` 斷言 `r.json()["answer"]`;`tests/conftest.py` monkeypatch `llm.answer`;
+      `specs/api.yml` 的 `/chat` 200 仍 `$ref: ChatResponse`。
 - [ ] **無需新增依賴**:`StreamingResponse` 已含於 `fastapi[standard]`,`json` 為 stdlib。
 
 ---
 
-## 任務待辦(T0–T7)
+## 任務待辦(T0–T8)
 
 ### T0 — 開分支(plan Step 0)
 
@@ -48,7 +52,16 @@
 - [ ] `git switch -c feat/iteration-2-streaming`(或同等命名)。
 - **Acceptance**:`git branch --show-current` 顯示新分支,非 `main`。
 
-### T1 — `core/llm.py`:`answer()` → `stream_answer()`(plan Step 1)
+### T1 — spec-first:先更新 `specs/api.yml` 契約(plan Step 1)
+
+- **動到**:`specs/api.yml`(**只動契約**;敘述文件 README / tech-stack 留到 T8)。
+- [ ] `info.description`:頂部「當前為 **Iteration 1(Walking Skeleton)**」與「`POST /chat`…(**非串流**…)」改為反映迭代 2 串流;`SSE 串流` 自「後續迭代」清單移除(已交付)。
+- [ ] `/chat` 的 `200`:由 `$ref: ChatResponse` 改描述為 `text/event-stream`(`data: {"text": "..."}` + `data: [DONE]`)。
+- [ ] 移除 `ChatResponse` schema(grep 確認無其他 `$ref`);`422` / `RootResponse` / `HealthResponse` 不變。
+- **Acceptance**:`specs/api.yml` 仍為合法 YAML;`grep -n "ChatResponse" specs/api.yml` 無命中;T2–T5 以此契約為準。
+- **注意**:OpenAPI 對 SSE 描述力有限,`/chat` 200 以**文字描述** SSE 事件流即可;真正的線上契約(`{"text":...}` + `[DONE]`)由 D2 / 測試把關。
+
+### T2 — `core/llm.py`:`answer()` → `stream_answer()`(plan Step 2)
 
 - **動到**:`src/fastapi_app_01/core/llm.py`。
 - [ ] client 建立方式不變(`_client = AsyncAnthropic(api_key=settings.anthropic_api_key)`)。
@@ -58,10 +71,10 @@
 - [ ] 補 `from collections.abc import AsyncIterator` import。
 - **Acceptance**:模組可被 import(有假 / 真 key 時);`stream_answer` 為 async generator
       (`inspect.isasyncgenfunction(llm.stream_answer)` 為真);`answer` 已不存在。
-- **注意**:`stream_answer` **只 yield 純文字 delta**,保持傳輸無關;SSE 線格式化留給 T2 的 api 層。
+- **注意**:`stream_answer` **只 yield 純文字 delta**,保持傳輸無關;SSE 線格式化留給 T3 的 api 層。
       `messages.stream` 是 async context manager,**必須**在 `async with` 內把 `text_stream` 消費完。
 
-### T2 — `api/chat.py`:回 `StreamingResponse`(SSE)(plan Step 2)
+### T3 — `api/chat.py`:回 `StreamingResponse`(SSE)(plan Step 3)
 
 - **動到**:`src/fastapi_app_01/api/chat.py`。
 - [ ] 新增 `_sse(question)` async generator:
@@ -71,36 +84,36 @@
       回 `StreamingResponse(_sse(req.question), media_type="text/event-stream")`。
 - [ ] import 調整:加 `import json`、`from collections.abc import AsyncIterator`、
       `from fastapi.responses import StreamingResponse`;**移除** `ChatResponse` 的 import(只留 `ChatRequest`)。
-- **Acceptance**:`POST /chat` 回 `Content-Type: text/event-stream`;本文為多段 `data: {"text": ...}\n\n` + 結尾 `data: [DONE]\n\n`。
+- **Acceptance**:`POST /chat` 回 `Content-Type: text/event-stream`,本文為多段 `data: {"text": ...}\n\n` + 結尾 `data: [DONE]\n\n`,與 T1 契約一致。
 - **注意**:`ensure_ascii=False` 讓中文不被轉成 `\uXXXX`;delta 含 `\n` 時靠 JSON 包裝避免破壞 SSE 框架(D2 的理由)。
 
-### T3 — `schemas/chat.py`:移除孤兒 `ChatResponse`(plan Step 3 / 決策 D4)
+### T4 — `schemas/chat.py`:移除孤兒 `ChatResponse`(plan Step 4 / 決策 D4)
 
 - **動到**:`src/fastapi_app_01/schemas/chat.py`。
-- [ ] 動工前先 `grep -rn "ChatResponse" src/ tests/` 確認除即將改的 `api/chat.py` 外無其他引用。
+- [ ] 動工前先 `grep -rn "ChatResponse" src/ tests/` 確認除已改的 `api/chat.py` 外無其他引用。
 - [ ] 移除 `ChatResponse` 類別,只留 `ChatRequest`。
 - **Acceptance**:`grep -rn "ChatResponse" src/` 無命中;`main.py` 未直接引用故不需改。
 - **注意**:`ChatRequest`(`question: str = Field(min_length=1)`)**不變** —— 422 驗證沿用它。
 
-### T4 — 更新測試:斷言串流契約(plan Step 4)【硬性 DoD】
+### T5 — 更新測試:斷言串流契約(plan Step 5)【硬性 DoD】
 
 - **動到**:`tests/conftest.py`、`tests/test_chat.py`。
 - [ ] `conftest.py`:`client` fixture 的 mock 接縫從 `llm.answer` 換成
-      `monkeypatch.setattr(llm, "stream_answer", fake_stream)`,其中 `fake_stream` 為 async generator
+      `monkeypatch.setattr(llm, "stream_answer", fake_stream)`,`fake_stream` 為 async generator
       `yield` 出 `["stub ", "answer ", f"for: {question}"]`。
 - [ ] `conftest.py`:新增第二個 fixture `newline_client`(同樣 monkeypatch `stream_answer`,
       改用 `newline_stream`,yield `["line1\n", "line2"]`),供測試 3 用。
 - [ ] `test_chat.py`:加 SSE 解析小工具 `_data_events(body)`(取所有 `data:` payload)。
 - [ ] **測試 1**`test_chat_streams_answer`:`200` + `content-type` 開頭 `text/event-stream`;
-      `_data_events` 末項 == `"[DONE]"`;前面各項的 `text` 串接 == `"stub answer for: <question>"`。
+      末項 == `"[DONE]"`;前面各項 `text` 串接 == `"stub answer for: <question>"`。
 - [ ] **測試 2**`test_chat_rejects_empty_question`:空 `question` → `422`。
-- [ ] **測試 3**`test_newline_delta_stays_one_frame`:用 `newline_client`;事件數 == 3
-      (2 內容 + `[DONE]`),`json.loads(events[0])["text"] == "line1\n"`、`events[1] == "line2"`。
-- **Acceptance**:`uv run pytest` 三條全綠;測試全程 mock,不打真 Claude。
+- [ ] **測試 3**`test_newline_delta_stays_one_frame`:用 `newline_client`;事件數 == 3,
+      `json.loads(events[0])["text"] == "line1\n"`、`events[1] == "line2"`。
+- **Acceptance**:`uv run pytest` 三條全綠;全程 mock,不打真 Claude。
 - **注意**:`TestClient`(httpx)會把串流**緩衝**成完整本文,`r.text` 即整段 SSE,足以斷言契約;
-      **真正的逐 token 增量遞送 in-process 測不準**,留待 T5 的 `curl -N` 肉眼確認(誠實邊界)。
+      **逐 token 增量遞送 in-process 測不準**,留待 T6 的 `curl -N` 肉眼確認(誠實邊界)。
 
-### T5 — host 手動驗收(plan Step 5)【硬性 DoD,需真 key,會計費】
+### T6 — host 手動驗收 + 契約比對(plan Step 6)【硬性 DoD,需真 key,會計費】
 
 - **動到**:無(執行驗證)。
 - [ ] `uv run uvicorn fastapi_app_01.main:app --reload` 起得來。
@@ -108,21 +121,9 @@
       → **逐段**印出 `data: {"text":"..."}`,最後 `data: [DONE]`。
 - [ ] 未設 `ANTHROPIC_API_KEY` 時啟動即報清楚的 `ValidationError`(fail fast,沿用迭代 1)。
 - [ ] 空 `question`(`{"question": ""}`)回 **422**。
-- **Acceptance**:`-N`(關 curl 緩衝)下肉眼可見逐字浮現,且收到 `[DONE]`;驗證情境符合預期狀態碼。
+- [ ] **契約比對(SDD 驗證環)**:開 `http://localhost:8000/openapi.json`(或 `/docs`),確認 `/chat` 已**不再**宣告 `ChatResponse`、`ChatRequest` 仍為 `minLength 1`,與 T1 的 `api.yml` 一致(程式產生的 openapi 與手寫契約不漂移)。
+- **Acceptance**:`-N` 下肉眼可見逐字浮現且收到 `[DONE]`;狀態碼符合預期;openapi 與 `api.yml` 對得起來。
 - **注意**:會**真實呼叫 Anthropic API(計費)**,做一次最小呼叫即可。
-
-### T6 — 文件對齊(plan Step 6)
-
-- **動到**:`specs/api.yml`、`README.md`、`specs/tech-stack.md`。
-- [ ] `specs/api.yml`:
-      - `info.description` 頂部「當前為 **Iteration 1(Walking Skeleton)**」與「`POST /chat`…(**非串流**…)」改為反映迭代 2 串流;`SSE 串流` 自「後續迭代」清單移除。
-      - `/chat` 的 `200`:由 `$ref: ChatResponse` 改描述為 `text/event-stream`(`data: {"text": "..."}` + `data: [DONE]`)。
-      - 移除 `ChatResponse` schema(grep 確認無其他 `$ref`);`422` / `RootResponse` / `HealthResponse` 不變。
-- [ ] `README.md`:迭代藍圖第 2 列狀態 🚧→✅;迭代 1/2 區塊與「快速啟動」`curl` 範例補 `-N` 與 SSE 說明;架構圖標示串流回應。
-- [ ] `specs/tech-stack.md`(維持「迭代 1 技術棧」定位,**不擴大範圍**):開頭加定位說明
-      (本檔為迭代 1 參考,串流變更見 `plans/iteration-2-streaming.md`);`anthropic` 段「迭代 2 才改 `messages.stream`」點明已採用。
-- **Acceptance**:`specs/api.yml` 仍為合法 YAML;`grep -rn "ChatResponse" specs/` 無命中;README 第 2 列為 ✅。
-- **注意**:specs 描述**已交付狀態**,故本步驟與程式**同批** commit,避免文件先於程式宣稱串流。
 
 ### T7 — 容器發布驗證(plan Step 7)【硬性 DoD,需真 key,會計費】
 
@@ -133,18 +134,27 @@
 - **Acceptance**:可發布映像在容器內也串流得出答案。
 - **注意**:會**真實呼叫 Anthropic API(計費)**,做一次最小呼叫即可。
 
+### T8 — 敘述文件對齊(plan Step 8)
+
+- **動到**:`README.md`、`specs/tech-stack.md`(契約 `api.yml` 已於 T1 先行,此處**只補敘述**)。
+- [ ] `README.md`:迭代藍圖第 2 列狀態 🚧→✅;迭代 1/2 區塊與「快速啟動」`curl` 範例補 `-N` 與 SSE 說明;架構圖標示串流回應。
+- [ ] `specs/tech-stack.md`(維持「迭代 1 技術棧」定位,**不擴大範圍**):開頭加定位說明
+      (本檔為迭代 1 參考,串流變更見 `plans/iteration-2-streaming.md`);`anthropic` 段「迭代 2 才改 `messages.stream`」點明已採用。
+- **Acceptance**:README 第 2 列為 ✅;tech-stack 開頭有定位說明。
+- **注意**:敘述文件與程式**同批** commit / 合併,避免 `main` 出現「文件超前程式」。
+
 ---
 
 ## 驗收測試(自動;對應 Layer 1 —— **本迭代屬硬性 DoD**)
 
-> 把 T5 的串流契約自動化。沿用 `specs/tech-stack.md` 的 `conftest.py` 模式
+> 把 T6 的串流契約自動化。沿用 `specs/tech-stack.md` 的 `conftest.py` 模式
 > (import app 前先設假 `ANTHROPIC_API_KEY`、在 `llm` 接縫 monkeypatch、`TestClient(app)`)。
-> Claude 一律 mock,不打真 API。對應 `specs/api.yml` 的 200(SSE) / 422 契約。
+> Claude 一律 mock,不打真 API。對應 T1 改好的 `specs/api.yml` 的 200(SSE) / 422 契約。
 
 - [ ] happy-path(AC 1–4):`text/event-stream` + 各 `data` 串接 == 完整答案 + 末項 `[DONE]`。
 - [ ] 輸入驗證(AC 6):空 `question` → `422`。
 - [ ] 換行不破框(AC 5,守 D2):含 `\n` 的 delta 被 JSON 轉義在 payload 內,事件數不暴增。
-- **注意**:in-process `TestClient` 免起 server、最快,適合開發迴圈 / CI;**逐 token 增量**靠 T5 肉眼驗。
+- **注意**:in-process `TestClient` 免起 server、最快,適合開發迴圈 / CI;**逐 token 增量**靠 T6 肉眼驗。
 
 ---
 
@@ -161,19 +171,21 @@
 
 ## Definition of Done(對映 plan 的 8 條)
 
-- [ ] **逐字串流**:`curl -N POST /chat` 逐段收到 `data: {"text": "..."}`,結尾 `data: [DONE]`。【T5 / T7】
-- [ ] **content-type 正確**:回應 `Content-Type: text/event-stream`。【T2 / T4】
-- [ ] **輸入驗證不變**:空 `question` 仍回 422(`ChatRequest` 的 `min_length=1`)。【T3 / T4】
-- [ ] **缺 key 仍 fail fast**:未設 `ANTHROPIC_API_KEY` 啟動即報 `ValidationError`(沿用迭代 1)。【T5】
-- [ ] **不需 DB 即可啟動**:沿用迭代 1,Postgres/Redis 仍非必要。【T5】
-- [ ] **測試綠燈**:`uv run pytest` 通過(串流 happy-path、422、換行不破框 共三條)。【T4】
+- [ ] **逐字串流**:`curl -N POST /chat` 逐段收到 `data: {"text": "..."}`,結尾 `data: [DONE]`。【T6 / T7】
+- [ ] **content-type 正確**:回應 `Content-Type: text/event-stream`。【T3 / T5】
+- [ ] **輸入驗證不變**:空 `question` 仍回 422(`ChatRequest` 的 `min_length=1`)。【T4 / T5】
+- [ ] **缺 key 仍 fail fast**:未設 `ANTHROPIC_API_KEY` 啟動即報 `ValidationError`(沿用迭代 1)。【T6】
+- [ ] **不需 DB 即可啟動**:沿用迭代 1,Postgres/Redis 仍非必要。【T6】
+- [ ] **測試綠燈**:`uv run pytest` 通過(串流 happy-path、422、換行不破框 共三條)。【T5】
 - [ ] **可發布**:容器版同一 `curl -N` 也串流得出答案。【T7】
-- [ ] **文件對齊**:README 迭代 2 狀態、`specs/api.yml` 的 `/chat` 已反映 SSE;無孤兒 `ChatResponse` 殘留。【T3 / T6】
+- [ ] **文件對齊**:`specs/api.yml` 已反映 SSE(無孤兒 `ChatResponse`)、README 迭代 2 狀態為 ✅。【T1 / T4 / T8】
 
 ---
 
 ## 注意事項彙總(避免踩坑)
 
+- **spec-first 順序**:先改 `api.yml` 契約(T1)再實作;`api.yml` 是手寫契約、FastAPI 由程式產生 `/openapi.json`,
+  兩者會漂移 → T6 做一次比對。README / tech-stack 屬**敘述**,留到 T8。
 - **async generator 生命週期**:`messages.stream` 是 async context manager,務必在 `async with` 內把
   `text_stream` 消費完;放進 `StreamingResponse` 的 generator 自然滿足(generator 跑完才結束)。
 - **SSE 框架 vs 換行**:delta 內含 `\n` 會破壞 `data:` 框架 → 採 D2 的 JSON 包裝規避(`ensure_ascii=False`)。
@@ -181,7 +193,7 @@
   路由透過模組屬性 `llm.stream_answer(...)` 呼叫,monkeypatch 模組屬性即可。
 - **in-process 測不到增量性**:`TestClient` 緩衝整段,Layer 1 驗的是 SSE **契約**,逐字浮現靠 `curl -N`。
 - **契約破壞是刻意的**:D1 替換後迭代 1 的 `{"answer": ...}` JSON 契約被取代(README 藍圖即如此規劃),非疏漏;
-  連帶要更新 `specs/api.yml` 與既有測試,勿留舊 JSON 斷言。
+  連帶要更新 `specs/api.yml`(T1)與既有測試(T5),勿留舊 JSON 斷言。
 - **OpenAPI 文件**:`StreamingResponse` 無 `response_model`,`/docs` 對 `/chat` 回應描述較簡略 → 以 `specs/api.yml` 手動補述。
 - **錯誤處理刻意最小**:不特別處理 client 斷線 / 串流中途上游錯誤,讓其自然冒出;健全處理排迭代 6,勿過度設計。
 - **不引入後續迭代技術**:OpenAI 相容 `/v1`(迭代 3)、Postgres(迭代 4)、RAG(迭代 5)、Redis/限流(迭代 6)一律不碰。
