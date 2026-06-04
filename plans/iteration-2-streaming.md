@@ -22,7 +22,7 @@
 | | 內容 |
 | ----------- | -------------------------------------------------------------- |
 | ✅ **In**  | `POST /chat` 改 SSE 逐字串流;`llm` 層提供串流接縫;更新測試與 `curl -N` 驗收;文件對齊 |
-| ❌ **Out** | OpenAI 相容 `/v1/chat/completions`(Open WebUI 對外相容層,延後)、對話記憶 / Postgres(迭代 3)、RAG / pgvector(迭代 4)、限流 / `/metrics` / 健全錯誤處理(迭代 5)、加分項(迭代 6) |
+| ❌ **Out** | OpenAI 相容 `/v1/chat/completions`(Open WebUI 對外相容層,迭代 3)、對話記憶 / Postgres(迭代 4)、RAG / pgvector(迭代 5)、限流 / `/metrics` / 健全錯誤處理(迭代 6)、加分項(迭代 7) |
 
 **刻意不做**:不做多輪歷史、不接 DB、不做檢索;串流中途上游失敗的**健全**錯誤處理仍延後(本迭代維持最小,讓錯誤自然冒出)。
 
@@ -86,12 +86,12 @@
 ### D5 — 串流格式範圍:自訂 SSE vs OpenAI 相容 `/v1`
 
 - **(定案)自訂 SSE**:本迭代只做 `data: {"text": "..."}` 自訂格式,專注打通「串流」這條技術風險。
-- (延後)**OpenAI 相容 `/v1/chat/completions`**(Open WebUI 直接可接的 `data: {"choices":[{"delta":{"content":...}}]}`)
-  是與「串流」正交的**對外相容層**關注點,排進後續迭代單獨做,避免本迭代範圍膨脹。
+- (迭代 3)**OpenAI 相容 `/v1/chat/completions`**(Open WebUI 直接可接的 `data: {"choices":[{"delta":{"content":...}}]}`)
+  是與「串流」正交的**對外相容層**關注點,排進緊接的迭代 3 單獨做,避免本迭代範圍膨脹。
 
 > **已定案(經討論)**:**D1 替換 `/chat`**、**D2 JSON 包裝 + `[DONE]`**、**D3 移除 `answer()`**、
 > **D4 移除 `ChatResponse`**、**D5 採自訂 SSE(OpenAI 相容 `/v1` 延後)**。
-> 另:串流中途錯誤 / client 斷線維持最小處理(排迭代 5);不引入 `sse-starlette`(內建 `StreamingResponse` 足夠)。
+> 另:串流中途錯誤 / client 斷線維持最小處理(排迭代 6);不引入 `sse-starlette`(內建 `StreamingResponse` 足夠)。
 > 下方步驟依此撰寫。
 
 ---
@@ -327,8 +327,8 @@ docker compose --profile full down
 - **async generator 生命週期**:`messages.stream` 是 async context manager,**必須**在 `async with` 內把
   `text_stream` 消費完;放進 FastAPI `StreamingResponse` 的 generator 自然滿足(generator 跑完才結束)。
 - **SSE 框架 vs 換行**:delta 內含 `\n` 會破壞 `data:` 框架 → 採 D2 的 JSON 包裝規避。
-- **客戶端中斷 / 中途錯誤**:本迭代維持最小——不特別處理 client 斷線或串流途中上游錯誤,排進迭代 5。
-- **不引入 `sse-starlette`**:內建 `StreamingResponse` 已足夠;若日後要 ping/重連/斷線偵測再評估(迭代 5+)。
+- **客戶端中斷 / 中途錯誤**:本迭代維持最小——不特別處理 client 斷線或串流途中上游錯誤,排進迭代 6。
+- **不引入 `sse-starlette`**:內建 `StreamingResponse` 已足夠;若日後要 ping/重連/斷線偵測再評估(迭代 6+)。
 - **OpenAPI 文件**:`StreamingResponse` 無法用 `response_model` 自動產生 schema,`/docs` 對 `/chat` 的回應描述會較簡略——以 `specs/api.yml` 手動補述。
 - **契約破壞**:採 D1 後迭代 1 的 JSON 契約被取代;這是有意識的演進(README 藍圖即如此規劃),非疏漏。
 
@@ -336,5 +336,6 @@ docker compose --profile full down
 
 ## 完成後 → 下一個迭代
 
-迭代 3(對話記憶):接 Postgres 存對話歷史、支援多輪。屆時 `stream_answer` 的 `messages`
-從單則 `[{"role":"user",...}]` 擴充為帶歷史的多則;骨架與串流方式不變。
+迭代 3(OpenAI 相容 `/v1`):新增 `/v1/chat/completions`,把本迭代的串流重塑成 OpenAI 相容格式
+(`data: {"choices":[{"delta":{"content":...}}]}`),即可接 Open WebUI 等前端;多輪歷史由前端
+帶在 `messages` 陣列送入,無需伺服器端持久化(伺服器端記憶留待迭代 4)。骨架與串流機制不變。

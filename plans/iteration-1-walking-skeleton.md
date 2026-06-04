@@ -20,7 +20,7 @@ Anthropic SDK → 可發布的容器映像。骨架一旦立起來,後面所有�
 | | 內容 |
 | ----------- | -------------------------------------------------------------- |
 | ✅ **In**  | `POST /chat` 非串流接 Claude;host 上開發/debug;容器化並做發布驗證 |
-| ❌ **Out** | 串流(迭代 2)、對話記憶/Postgres(迭代 3)、RAG/pgvector(迭代 4)、限流/監控/錯誤處理(迭代 5)、加分項(迭代 6)、自動化測試(隨後續迭代補) |
+| ❌ **Out** | 串流(迭代 2)、OpenAI 相容 /v1(迭代 3)、對話記憶/Postgres(迭代 4)、RAG/pgvector(迭代 5)、限流/監控/錯誤處理(迭代 6)、加分項(迭代 7)、自動化測試(隨後續迭代補) |
 
 **刻意不做**的事同樣重要:不接 DB、不存對話歷史、不做檢索、不做認證/限流、錯誤處理只做最小。
 這些不是遺漏,是排進後面的迭代。
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     anthropic_model: str = "claude-sonnet-4-6"
 
-    # 迭代 3 起才需要 → 本迭代設為選填,缺了也能啟動。
+    # 迭代 4 起才需要 → 本迭代設為選填,缺了也能啟動。
     database_url: str | None = None
     redis_url: str | None = None
 ```
@@ -250,7 +250,7 @@ curl -X POST http://localhost:8000/chat -H 'Content-Type: application/json' \
 > 與「本迭代不接 DB」的精神不符(只是能跑、較重)。兩個選項:
 > - **(A) 維持現狀**:DB/Redis 跟著起來但 `/chat` 不碰它們。改動最小,先求發布驗證會過。
 > - **(B) 為迭代 1 瘦身**(建議):把 `api` 的 `depends_on` 與 DB/Redis `environment` 拿掉,
->   讓發布產物真的只依賴 Claude;等迭代 3 接 DB 時再加回。最誠實,但要動 `docker-compose.yml`。
+>   讓發布產物真的只依賴 Claude;等迭代 4 接 DB 時再加回。最誠實,但要動 `docker-compose.yml`。
 >
 > 本迭代採哪個請在實作時定案並記錄於 commit message。
 
