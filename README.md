@@ -215,6 +215,28 @@ docker compose --profile full watch   # 改 code 自動同步進容器
 
 ---
 
+## Open WebUI 串接(迭代 3,規劃中 🚧)
+
+> 迭代 3 會新增 OpenAI 相容的 `POST /v1/chat/completions` 與 `GET /v1/models`,屆時可用 **Open WebUI** 圖形介面對話。
+> 以下指令在**迭代 3 落地後**可用(目前 `/v1` 端點與 compose 的 `openwebui` 服務尚未存在)。多輪歷史由前端帶入,無需伺服器端持久化。
+
+compose 會新增一個 `openwebui` 服務(profile `webui`,opt-in,不綁預設啟動)。兩種跑法:
+
+```bash
+# 混合(日常):API 跑 host(綁 0.0.0.0),compose 只起 UI
+uv run uvicorn fastapi_app_01.main:app --host 0.0.0.0 --reload
+docker compose --profile webui up -d openwebui
+# 開 http://localhost:3000 → 模型下拉選我們的模型 → 對話逐字串流
+
+# 全容器:API 也在 compose,UI 用服務名連 api
+OPENWEBUI_API_BASE=http://api:8000/v1 docker compose --profile full --profile webui up
+```
+
+> **連線細節**:容器內 UI 連 host 上的 API 用 `host.docker.internal`(mac/win 原生;Linux 靠 compose 的
+> `extra_hosts: host-gateway`)。`OPENAI_API_KEY` 給任意值即可(本機不驗證)。
+
+---
+
 ## 跑測試
 
 > 迭代 1 已有 `POST /chat` 的 in-process 測試(`tests/`,Claude 被 mock);後續迭代持續補上。
