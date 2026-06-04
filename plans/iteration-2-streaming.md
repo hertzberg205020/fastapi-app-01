@@ -261,9 +261,16 @@ curl -N -X POST http://localhost:8000/chat \
 
 ### Step 6 — 文件對齊
 
-- `specs/api.yml`:`/chat` 的 `200` 改描述為 `text/event-stream`(SSE 事件流,`data: {"text": "..."}` + `[DONE]`),移除對 `ChatResponse` 的 `$ref`;若 `ChatResponse` schema 不再被引用則一併清掉。`422` 不變。
+> 原則:specs 描述的是**已交付狀態**,故這些變更與程式**同批**進,避免文件先於程式宣稱串流。
+
+- `specs/api.yml`(單一真實契約,須完整更新到迭代 2):
+  - `info.description`:頂部「當前為 **Iteration 1(Walking Skeleton)**」與「`POST /chat`…(**非串流**、無對話歷史、無 RAG)」兩句改為反映迭代 2 串流;`SSE 串流` 從「後續迭代」清單移除(已交付)。
+  - `/chat` 的 `200`:從 `$ref: ChatResponse` 改描述為 `text/event-stream`(SSE 事件流,`data: {"text": "..."}` + `data: [DONE]`)。
+  - `ChatResponse` schema 變孤兒 → 移除(grep 確認無其他 `$ref`)。`422`、`RootResponse`、`HealthResponse` 不變。
 - `README.md`:迭代藍圖第 2 列狀態 🚧→✅;迭代 1/2 區塊與「快速啟動」的 `curl` 範例補 `-N` 與 SSE 說明;架構圖標示串流回應。
-- `specs/tech-stack.md`:`anthropic` 段把「迭代 2 才改 `messages.stream`」更新為「已採用」(輕量,不擴大該文件範圍)。
+- `specs/tech-stack.md`(維持其「迭代 1 技術棧」定位,**不擴大範圍**):
+  - 開頭加一句定位說明:「本檔為**迭代 1**技術棧參考;迭代 2 的串流變更見 `plans/iteration-2-streaming.md`」,避免讀者誤把檔內 `messages.create` / `r.json()["answer"]` 等**迭代 1 範例**當成最新。
+  - 不逐處改寫該檔的非串流範例(它們是迭代 1 的忠實紀錄);僅 `anthropic` 段第 117 行「迭代 2 才改 `messages.stream`」可順手點明「迭代 2 已採用」。
 
 ### Step 7 — 發布驗證(收工前)
 
