@@ -186,7 +186,7 @@ def test_chat_rejects_empty_question(client):
     assert r.status_code == 422                   # 由 ChatRequest 的 min_length=1 把關
 ```
 
-### 黑箱 E2E(發布驗證,example.md 風格)
+### 黑箱 E2E(發布驗證)
 
 ```python
 # tests/test_e2e.py(預計;需先把服務跑起來)
@@ -210,14 +210,13 @@ def test_chat_smoke(api_client):
 | Claude | 真打 | **mock** | 真打或 stub |
 | 速度 | 看手速 | **最快** | 中 |
 | 斷言 | 人眼看 | 程式斷言 | 程式斷言 |
-| 對應 example.md | — | — | ✓(base_url fixture) |
 | 適用 | 臨時試 | 開發迴圈、CI | 發布驗證(release gate) |
 
 ---
 
 ## 紅燈階段定義(TDD;採 test-first 時)
 
-對應 example.md 的「紅燈階段」——先寫會失敗的測試,再實作讓它變綠。
+「紅燈階段」——先寫會失敗的測試,再實作讓它變綠。
 
 ### 需要先定義(紅燈)
 - `tests/conftest.py`(env 設定 + mock + `client` fixtures)
@@ -297,7 +296,7 @@ docker compose --profile full up --build
 | OpenAI embeddings(或等價) | 文字轉向量 | 迭代 4 |
 | Redis(`redis:7-alpine`) | 限流 | 迭代 5 |
 | 監控 / metrics | `/metrics` 觀測 | 迭代 5 |
-| **Testcontainers + SQLAlchemy** E2E(`specs/example.md` 那套) | 對真 DB 的整合測試與隔離 | 迭代 3+(接 DB 後) |
+| **Testcontainers + SQLAlchemy** E2E | 對真 DB 的整合測試與隔離 | 迭代 3+(接 DB 後) |
 
 ---
 
@@ -305,4 +304,3 @@ docker compose --profile full up --build
 
 - 迭代藍圖與當前範圍:`README.md`(迭代藍圖 Roadmap)
 - iteration 1 執行計畫(步驟 + DoD):`plans/iteration-1-walking-skeleton.md`
-- 完整 E2E 測試架構(接 DB 後的參考範本):`specs/example.md`
